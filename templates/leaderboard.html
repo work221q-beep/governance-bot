@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>body { background-color: #09090b; color: #f4f4f5; font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="p-10">
+    <h1 class="text-4xl font-bold mb-10 text-center">STATUS<span class="text-red-600">CORE</span> ARENA</h1>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-6xl mx-auto">
+        <div class="bg-zinc-900 p-6 rounded-lg border border-zinc-800">
+            <h2 class="text-emerald-500 font-bold mb-4 uppercase">Top Credibility</h2>
+            {% for p in top_cred %}
+            <div class="flex justify-between border-b border-zinc-800 py-2">
+                <span>{{ p.username }}</span><span class="text-emerald-400 font-mono">{{ p.credibility }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="bg-zinc-900 p-6 rounded-lg border border-red-900/30">
+            <h2 class="text-red-500 font-bold mb-4 uppercase">Fraud Watch</h2>
+            {% for p in top_fraud %}
+            <div class="flex justify-between border-b border-zinc-800 py-2">
+                <div class="flex gap-2">
+                    <span>{{ p.username }}</span>
+                    {% if p.fraudIndex >= 75 %}<span class="text-[10px] bg-red-600 px-1 rounded font-bold">⚠ FRAUD WATCH</span>{% endif %}
+                </div>
+                <span class="text-red-500 font-mono">{{ p.fraudIndex }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
