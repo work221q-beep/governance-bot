@@ -33,7 +33,8 @@ async def on_message(message):
         target_id = str(message.mentions[0].id)
         
         now = datetime.utcnow()
-        if (user_last_event.get(actor_id) and (now - user_last_event[actor_id]).total_seconds() < 30): return [cite: 2]
+        if (user_last_event.get(actor_id) and (now - user_last_event[actor_id]).total_seconds() < 30): 
+            return
         user_last_event[actor_id] = now
 
         await ensure_player(server_id, actor_id, message.author.display_name)
