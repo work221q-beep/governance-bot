@@ -41,7 +41,6 @@ Claim: {claim_text}
                 response.raise_for_status()
                 raw = response.json().get("response", "").strip()
 
-                # Extract JSON safely
                 match = re.search(r"\{.*\}", raw, re.DOTALL)
                 if not match:
                     raise ValueError("No JSON found")
