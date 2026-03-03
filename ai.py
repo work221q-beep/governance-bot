@@ -22,7 +22,7 @@ async def arbitrate_claim(model, actor, target, claim_text):
                 )
                 response.raise_for_status()
                 raw = response.json().get("response", "").strip()
-                match = re.search(r"\{.*\}", raw, re.DOTALL) [cite: 2]
+                match = re.search(r"\{.*\}", raw, re.DOTALL)
                 parsed = json.loads(match.group())
                 return {"verdict": parsed.get("verdict", "invalid"), "confidence": int(parsed.get("confidence", 0))}
         except Exception:
