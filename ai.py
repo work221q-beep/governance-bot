@@ -2,6 +2,7 @@ import os
 import httpx
 import asyncio
 import json
+import re
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
 
@@ -33,16 +34,24 @@ Claim: {claim_text}
                         "prompt": system_prompt + prompt,
                         "temperature": 0.05,
                         "stream": False,
-                        "options": {
-                            "num_predict": 80
-                        }
+                        "options": {"num_predict": 80}
                     }
                 )
 
                 response.raise_for_status()
                 raw = response.json().get("response", "").strip()
 
-                return json.loads(raw)
+                # Extract JSON safely
+                match = re.search(r"\{.*\}", raw, re.DOTALL)
+                if not match:
+                    raise ValueError("No JSON found")
+
+                parsed = json.loads(match.group())
+
+                return {
+                    "verdict": parsed.get("verdict", "invalid"),
+                    "confidence": int(parsed.get("confidence", 0))
+                }
 
         except Exception as e:
             print("ARBITRATION ERROR:", str(e))
