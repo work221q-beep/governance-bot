@@ -1,140 +1,42 @@
-import os
 import asyncio
-import httpx
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
-from itsdangerous import URLSafeSerializer
+from fastapi import FastAPI
 from bot import start_bot
-from db import get_server_config, configs
-from ai import get_available_models
+from db import init_indexes, players
+from datetime import datetime
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
-DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
-
-serializer = URLSafeSerializer(SECRET_KEY)
+FRAUD_DECAY = 5
 
 
-# -----------------------
-# Background Scheduler
-# -----------------------
-
-async def background_scheduler():
+async def decay_cycle():
     while True:
         try:
-            print("Background check running...")
-            # Future: add decay logic here
-        except Exception as e:
-            print("Scheduler error:", e)
+            now = datetime.utcnow()
+            cursor = players.find({})
 
-        await asyncio.sleep(3600)  # every hour
+            async for player in cursor:
+                if player["fraudIndex"] > 0:
+                    await players.update_one(
+                        {"_id": player["_id"]},
+                        {"$inc": {"fraudIndex": -FRAUD_DECAY}}
+                    )
+
+            print("Decay cycle complete.")
+
+        except Exception as e:
+            print("Decay error:", e)
+
+        await asyncio.sleep(86400)
 
 
 @app.on_event("startup")
 async def startup_event():
+    await init_indexes()
     asyncio.create_task(start_bot())
-    asyncio.create_task(background_scheduler())
+    asyncio.create_task(decay_cycle())
 
-
-# -----------------------
-# Health Check Endpoint
-# -----------------------
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-# -----------------------
-# Web Routes
-# -----------------------
-
-@app.get("/")
-async def home(request: Request):
-    user_cookie = request.cookies.get("session")
-    user = None
-
-    if user_cookie:
-        try:
-            user = serializer.loads(user_cookie)
-        except:
-            user = None
-
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "user": user}
-    )
-
-
-@app.get("/login")
-async def login():
-    url = (
-        "https://discord.com/api/oauth2/authorize"
-        f"?client_id={DISCORD_CLIENT_ID}"
-        "&response_type=code"
-        f"&redirect_uri={DISCORD_REDIRECT_URI}"
-        "&scope=identify%20guilds"
-    )
-    return RedirectResponse(url)
-
-
-@app.get("/auth/callback")
-async def callback(code: str):
-    async with httpx.AsyncClient() as client:
-        token_res = await client.post(
-            "https://discord.com/api/oauth2/token",
-            data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": DISCORD_REDIRECT_URI
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-
-        token_data = token_res.json()
-        access_token = token_data.get("access_token")
-
-        user_res = await client.get(
-            "https://discord.com/api/users/@me",
-            headers={"Authorization": f"Bearer {access_token}"}
-        )
-
-        guild_res = await client.get(
-            "https://discord.com/api/users/@me/guilds",
-            headers={"Authorization": f"Bearer {access_token}"}
-        )
-
-        user = user_res.json()
-        guilds = guild_res.json()
-
-    manageable_guilds = []
-
-    for guild in guilds:
-        permissions = int(guild["permissions"])
-        is_owner = guild["owner"]
-        can_manage = permissions & 0x20
-
-        if is_owner or can_manage:
-            manageable_guilds.append(guild)
-
-    session_data = {
-        "id": user["id"],
-        "username": user["username"],
-        "guilds": manageable_guilds
-    }
-
-    response = RedirectResponse(url="/dashboard")
-    response.set_cookie(
-        "session",
-        serializer.dumps(session_data),
-        httponly=True
-    )
-
-    return response
