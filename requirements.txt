@@ -3,3 +3,7 @@ uvicorn
 motor
 httpx
 python-dotenv
+jinja2
+python-multipart
+passlib[bcrypt]
+itsdangerous
