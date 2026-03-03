@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from db import get_server_config, logs
 from ai import generate_ai_response
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -13,9 +13,15 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# In-memory user cooldown (burst protection)
+USER_COOLDOWN_SECONDS = 15
+user_last_message = {}
+
+
 @bot.event
 async def on_ready():
     print(f"Bot online as {bot.user}")
+
 
 @bot.event
 async def on_message(message):
@@ -44,6 +50,16 @@ async def on_message(message):
     if not should_respond:
         return
 
+    # --- COOLDOWN CHECK ---
+    now = datetime.utcnow()
+    last_time = user_last_message.get(message.author.id)
+
+    if last_time and (now - last_time).total_seconds() < USER_COOLDOWN_SECONDS:
+        return  # silent ignore
+
+    user_last_message[message.author.id] = now
+    # -----------------------
+
     prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
     if not prompt:
@@ -67,6 +83,7 @@ async def on_message(message):
     })
 
     await bot.process_commands(message)
+
 
 async def start_bot():
     await bot.start(DISCORD_TOKEN)
