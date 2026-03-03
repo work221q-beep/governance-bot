@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ guild_name }} Settings</title>
+</head>
+<body>
+    <h1>{{ guild_name }} Settings</h1>
+
+    <form method="post" action="/server/{{ guild_id }}/update">
+
+        <label>Prefix:</label><br>
+        <input type="text" name="prefix" value="{{ config.prefix }}"><br><br>
+
+        <label>AI Enabled:</label>
+        <input type="checkbox" name="ai_enabled"
+            {% if config.ai_enabled %}checked{% endif %}>
+        <br><br>
+
+        <label>Respond To Every Message:</label>
+        <input type="checkbox" name="respond_every_message"
+            {% if config.respond_every_message %}checked{% endif %}>
+        <br><br>
+
+        <label>Temperature:</label><br>
+        <input type="number" step="0.1" name="temperature"
+            value="{{ config.temperature }}"><br><br>
+
+        <button type="submit">Save Settings</button>
+    </form>
+
+    <br>
+    <a href="/dashboard">Back to Dashboard</a>
+</body>
+</html>
