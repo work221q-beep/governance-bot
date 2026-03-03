@@ -12,12 +12,12 @@ events = db.events
 configs = db.configs
 
 async def init_indexes():
-    # Prevent cross-server stat bleed [cite: 2]
+    # Prevent cross-server stat bleed 
     await players.create_index([("server_id", 1), ("discord_id", 1)], unique=True)
-    # Leaderboard indexes [cite: 2]
+    # Leaderboard indexes 
     await players.create_index([("server_id", 1), ("credibility", -1)])
     await players.create_index([("server_id", 1), ("fraudIndex", -1)])
-    # Auto-delete events after 7 days to save space [cite: 2]
+    # Auto-delete events after 7 days 
     await events.create_index("createdAt", expireAfterSeconds=604800)
 
 async def get_server_config(server_id: str):
