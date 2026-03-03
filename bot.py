@@ -1,0 +1,72 @@
+import os
+import discord
+from discord.ext import commands
+from db import get_server_config, logs
+from ai import generate_ai_response
+from datetime import datetime
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f"Bot online as {bot.user}")
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    if not message.guild:
+        return
+
+    config = await get_server_config(str(message.guild.id))
+
+    if not config["ai_enabled"]:
+        return
+
+    if config["allowed_channels"]:
+        if str(message.channel.id) not in config["allowed_channels"]:
+            return
+
+    should_respond = False
+
+    if config["respond_every_message"]:
+        should_respond = True
+    elif bot.user in message.mentions:
+        should_respond = True
+
+    if not should_respond:
+        return
+
+    prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+
+    if not prompt:
+        return
+
+    await message.channel.typing()
+
+    ai_response = await generate_ai_response(
+        config["model"],
+        prompt,
+        config["temperature"]
+    )
+
+    await message.reply(ai_response[:1900])
+
+    await logs.insert_one({
+        "server_id": str(message.guild.id),
+        "user_input": prompt,
+        "ai_output": ai_response,
+        "timestamp": datetime.utcnow()
+    })
+
+    await bot.process_commands(message)
+
+async def start_bot():
+    await bot.start(DISCORD_TOKEN)
