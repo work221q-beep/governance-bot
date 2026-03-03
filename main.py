@@ -2,11 +2,12 @@ import asyncio
 from fastapi import FastAPI
 from bot import start_bot
 from db import init_indexes, players
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
 FRAUD_DECAY = 5
+DECAY_INTERVAL_HOURS = 24
 
 
 async def decay_cycle():
@@ -16,18 +17,31 @@ async def decay_cycle():
             cursor = players.find({})
 
             async for player in cursor:
-                if player["fraudIndex"] > 0:
-                    await players.update_one(
-                        {"_id": player["_id"]},
-                        {"$inc": {"fraudIndex": -FRAUD_DECAY}}
-                    )
+                last_decay = player.get("lastDecay", now)
+                hours_since = (now - last_decay).total_seconds() / 3600
+
+                if hours_since < DECAY_INTERVAL_HOURS:
+                    continue
+
+                current_fraud = player.get("fraudIndex", 0)
+                new_fraud = max(0, current_fraud - FRAUD_DECAY)
+
+                await players.update_one(
+                    {"_id": player["_id"]},
+                    {
+                        "$set": {
+                            "fraudIndex": new_fraud,
+                            "lastDecay": now
+                        }
+                    }
+                )
 
             print("Decay cycle complete.")
 
         except Exception as e:
             print("Decay error:", e)
 
-        await asyncio.sleep(86400)
+        await asyncio.sleep(3600)  # check hourly
 
 
 @app.on_event("startup")
