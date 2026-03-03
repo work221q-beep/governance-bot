@@ -1,29 +1,35 @@
 import os
 import httpx
+import asyncio
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
 
+# Global lock to prevent concurrent generations
+generation_lock = asyncio.Lock()
+
 
 async def generate_ai_response(model, prompt, temperature):
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "temperature": temperature,
-                    "stream": False
-                }
-            )
+    async with generation_lock:
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(
+                    f"{OLLAMA_URL}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "temperature": temperature,
+                        "stream": False
+                    }
+                )
 
-            response.raise_for_status()
-            data = response.json()
-            return data.get("response", "AI error")
+                response.raise_for_status()
+                data = response.json()
 
-    except Exception as e:
-        print("OLLAMA ERROR:", str(e))
-        return "AI error"
+                return data.get("response", "AI error")
+
+        except Exception as e:
+            print("OLLAMA ERROR:", str(e))
+            return "AI error"
 
 
 async def get_available_models():
