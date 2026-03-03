@@ -4,7 +4,6 @@ import asyncio
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
 
-# Global lock to prevent concurrent generations
 generation_lock = asyncio.Lock()
 
 
@@ -18,7 +17,13 @@ async def generate_ai_response(model, prompt, temperature):
                         "model": model,
                         "prompt": prompt,
                         "temperature": temperature,
-                        "stream": False
+                        "stream": False,
+                        "options": {
+                            "num_predict": 120,      # 🔥 LIMIT TOKENS
+                            "num_ctx": 2048,         # 🔥 SMALLER CONTEXT
+                            "top_k": 40,
+                            "top_p": 0.9
+                        }
                     }
                 )
 
