@@ -1,62 +1,49 @@
 import os
 import httpx
 import asyncio
+import json
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
 
-# Limit concurrent generations (2 max for 2vCPU VM)
-GENERATION_LIMIT = 2
-generation_semaphore = asyncio.Semaphore(GENERATION_LIMIT)
+ARBITRATION_LIMIT = 2
+arbitration_semaphore = asyncio.Semaphore(ARBITRATION_LIMIT)
 
 
-async def generate_ai_response(model, prompt, temperature):
-    async with generation_semaphore:
+async def arbitrate_claim(actor, target, claim_text):
+    async with arbitration_semaphore:
         try:
             system_prompt = (
-                "You are Sylas, a Discord AI assistant. "
-                "Reply clearly and concisely. "
-                "Do not switch languages unless the user does. "
-                "Do not generate instructions, tasks, or unrelated content. "
-                "Only respond directly to the user's message."
+                "You are a strict competitive referee.\n"
+                "Return ONLY valid JSON.\n"
+                'Format: {"verdict": "valid" or "invalid", "confidence": 0-100}\n'
+                "Do not explain."
             )
 
-            full_prompt = f"{system_prompt}\n\nUser: {prompt}\nSylas:"
+            prompt = f"""
+Actor: {actor}
+Target: {target}
+Claim: {claim_text}
+"""
 
             async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={
-                        "model": model,
-                        "prompt": full_prompt,
-                        "temperature": float(temperature),
+                        "model": "phi3:mini",
+                        "prompt": system_prompt + prompt,
+                        "temperature": 0.05,
                         "stream": False,
                         "options": {
-                            "num_predict": 120,
-                            "num_ctx": 2048,
-                            "top_k": 40,
-                            "top_p": 0.9,
-                            "stop": ["User:", "Sylas:", "---"]
+                            "num_predict": 80
                         }
                     }
                 )
 
                 response.raise_for_status()
-                data = response.json()
+                raw = response.json().get("response", "").strip()
 
-                return data.get("response", "AI error").strip()
+                return json.loads(raw)
 
         except Exception as e:
-            print("OLLAMA ERROR:", str(e))
-            return "⚠ AI unavailable."
-
-
-async def get_available_models():
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-            response.raise_for_status()
-            data = response.json()
-            return [model["name"] for model in data.get("models", [])]
-    except Exception as e:
-        print("MODEL FETCH ERROR:", str(e))
-        return []
+            print("ARBITRATION ERROR:", str(e))
+            return {"verdict": "invalid", "confidence": 0}
