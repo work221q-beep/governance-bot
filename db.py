@@ -1,32 +1,50 @@
 import os
-from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
+from datetime import datetime
 
 MONGO_URI = os.getenv("MONGO_URI")
 
 client = AsyncIOMotorClient(MONGO_URI)
-db = client.get_default_database()
+db = client.statuscore
 
-configs = db["configs"]
-logs = db["logs"]
-
-players = db["players"]
-events = db["events"]
+players = db.players
+events = db.events
 
 
 async def init_indexes():
-    await players.create_index("discord_id", unique=True)
-    await players.create_index("fraudIndex")
-    await events.create_index("createdAt", expireAfterSeconds=604800)  # 7 days TTL
+    # Prevent cross-server stat bleed
+    await players.create_index(
+        [("server_id", 1), ("discord_id", 1)],
+        unique=True
+    )
+
+    # Leaderboard indexes
+    await players.create_index([("server_id", 1), ("credibility", -1)])
+    await players.create_index([("server_id", 1), ("fraudIndex", -1)])
+
+    # Auto-delete events after 7 days
+    await events.create_index(
+        "createdAt",
+        expireAfterSeconds=604800
+    )
 
 
-async def ensure_player(discord_id: str, username: str):
-    player = await players.find_one({"discord_id": discord_id})
+async def ensure_player(server_id: str, discord_id: str, username: str):
+    player = await players.find_one({
+        "server_id": server_id,
+        "discord_id": discord_id
+    })
 
     if player:
+        # Keep username fresh
+        await players.update_one(
+            {"_id": player["_id"]},
+            {"$set": {"username": username}}
+        )
         return player
 
     new_player = {
+        "server_id": server_id,
         "discord_id": discord_id,
         "username": username,
         "fraudIndex": 0,
@@ -38,19 +56,3 @@ async def ensure_player(discord_id: str, username: str):
 
     await players.insert_one(new_player)
     return new_player
-
-
-async def get_server_config(server_id: str):
-    config = await configs.find_one({"server_id": server_id})
-
-    if not config:
-        default = {
-            "server_id": server_id,
-            "ai_enabled": True,
-            "model": "phi3:mini",
-            "temperature": 0.7
-        }
-        await configs.insert_one(default)
-        return default
-
-    return config
