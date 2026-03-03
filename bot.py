@@ -28,14 +28,12 @@ async def on_message(message):
     if message.author.bot or not message.guild: return
     config = await get_server_config(str(message.guild.id))
     
-    # Check for StatusCore claims 
     if CLAIM_REGEX.search(message.content) and message.mentions and config.get("ai_enabled"):
         server_id, actor_id = str(message.guild.id), str(message.author.id)
         target_id = str(message.mentions[0].id)
         
-        # Rate Limiting [cite: 2]
         now = datetime.utcnow()
-        if (user_last_event.get(actor_id) and (now - user_last_event[actor_id]).total_seconds() < 30): return
+        if (user_last_event.get(actor_id) and (now - user_last_event[actor_id]).total_seconds() < 30): return [cite: 2]
         user_last_event[actor_id] = now
 
         await ensure_player(server_id, actor_id, message.author.display_name)
