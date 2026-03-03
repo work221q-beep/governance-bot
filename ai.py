@@ -1,7 +1,6 @@
 import os, httpx, asyncio, json, re
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
-# Protect 2vCPU from overload 
 arbitration_semaphore = asyncio.Semaphore(2)
 
 async def arbitrate_claim(model, actor, target, claim_text):
@@ -23,9 +22,8 @@ async def arbitrate_claim(model, actor, target, claim_text):
                 )
                 response.raise_for_status()
                 raw = response.json().get("response", "").strip()
-                # Clean JSON extraction [cite: 2]
-                match = re.search(r"\{.*\}", raw, re.DOTALL)
+                match = re.search(r"\{.*\}", raw, re.DOTALL) [cite: 2]
                 parsed = json.loads(match.group())
                 return {"verdict": parsed.get("verdict", "invalid"), "confidence": int(parsed.get("confidence", 0))}
-        except Exception as e:
+        except Exception:
             return {"verdict": "invalid", "confidence": 0}
