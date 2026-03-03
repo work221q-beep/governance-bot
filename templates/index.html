@@ -5,6 +5,12 @@
 </head>
 <body>
     <h1>Governance Bot Panel</h1>
-    <a href="/login">Login with Discord</a>
+
+    {% if user %}
+        <p>Logged in as {{ user.username }}</p>
+        <a href="/dashboard">Go to Dashboard</a>
+    {% else %}
+        <a href="/login">Login with Discord</a>
+    {% endif %}
 </body>
 </html>
