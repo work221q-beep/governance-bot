@@ -1,9 +1,10 @@
 import os
+import re
 import discord
 from discord.ext import commands
-from db import get_server_config, logs
-from ai import generate_ai_response
-from datetime import datetime, timedelta
+from datetime import datetime
+from db import ensure_player, players, events
+from ai import arbitrate_claim
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -13,14 +14,22 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# In-memory user cooldown (burst protection)
-USER_COOLDOWN_SECONDS = 15
-user_last_message = {}
+# ------------------
+# Cooldowns
+# ------------------
+
+USER_COOLDOWN_SECONDS = 30
+PAIR_COOLDOWN_SECONDS = 120
+
+user_last_event = {}
+pair_last_event = {}
+
+CLAIM_REGEX = re.compile(r"\b(i beat|i destroyed|i 3-0d|i smoked)\b", re.IGNORECASE)
 
 
 @bot.event
 async def on_ready():
-    print(f"Bot online as {bot.user}")
+    print(f"StatusCore online as {bot.user}")
 
 
 @bot.event
@@ -31,58 +40,77 @@ async def on_message(message):
     if not message.guild:
         return
 
-    config = await get_server_config(str(message.guild.id))
-
-    if not config["ai_enabled"]:
+    if not CLAIM_REGEX.search(message.content):
         return
 
-    if config["allowed_channels"]:
-        if str(message.channel.id) not in config["allowed_channels"]:
-            return
-
-    should_respond = False
-
-    if config["respond_every_message"]:
-        should_respond = True
-    elif bot.user in message.mentions:
-        should_respond = True
-
-    if not should_respond:
+    if not message.mentions:
         return
 
-    # --- COOLDOWN CHECK ---
+    actor_id = str(message.author.id)
+    actor_name = message.author.display_name
+    target = message.mentions[0]
+    target_id = str(target.id)
+    target_name = target.display_name
+
     now = datetime.utcnow()
-    last_time = user_last_message.get(message.author.id)
 
+    # ---- User cooldown
+    last_time = user_last_event.get(actor_id)
     if last_time and (now - last_time).total_seconds() < USER_COOLDOWN_SECONDS:
-        return  # silent ignore
-
-    user_last_message[message.author.id] = now
-    # -----------------------
-
-    prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
-
-    if not prompt:
         return
 
-    await message.channel.typing()
+    user_last_event[actor_id] = now
 
-    ai_response = await generate_ai_response(
-        config["model"],
-        prompt,
-        config["temperature"]
-    )
+    # ---- Pair cooldown
+    pair_key = f"{actor_id}:{target_id}"
+    last_pair = pair_last_event.get(pair_key)
 
-    await message.reply(ai_response[:1900])
+    if last_pair and (now - last_pair).total_seconds() < PAIR_COOLDOWN_SECONDS:
+        return
 
-    await logs.insert_one({
-        "server_id": str(message.guild.id),
-        "user_input": prompt,
-        "ai_output": ai_response,
-        "timestamp": datetime.utcnow()
+    pair_last_event[pair_key] = now
+
+    # ---- Ensure players
+    actor = await ensure_player(actor_id, actor_name)
+    target_player = await ensure_player(target_id, target_name)
+
+    verdict = await arbitrate_claim(actor_name, target_name, message.content)
+
+    if verdict["verdict"] == "valid":
+        await players.update_one(
+            {"discord_id": actor_id},
+            {"$inc": {"credibility": 5},
+             "$set": {"lastActive": now}}
+        )
+
+        await players.update_one(
+            {"discord_id": target_id},
+            {"$inc": {"fraudIndex": 5},
+             "$set": {"lastActive": now}}
+        )
+
+        await message.reply(
+            f"⚖️ VERIFIED. {actor_name} gains credibility. {target_name} fraud +5."
+        )
+
+    else:
+        await players.update_one(
+            {"discord_id": actor_id},
+            {"$inc": {"fraudIndex": 5},
+             "$set": {"lastActive": now}}
+        )
+
+        await message.reply(
+            f"⚖️ INVALID CLAIM. {actor_name} fraud +5."
+        )
+
+    await events.insert_one({
+        "actor": actor_id,
+        "target": target_id,
+        "verdict": verdict["verdict"],
+        "confidence": verdict["confidence"],
+        "createdAt": now
     })
-
-    await bot.process_commands(message)
 
 
 async def start_bot():
