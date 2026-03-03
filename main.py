@@ -1,18 +1,22 @@
 import os
 import asyncio
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-import httpx
-from db import servers
+from itsdangerous import URLSafeSerializer
 from bot import start_bot
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+# ENV
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
+
+serializer = URLSafeSerializer(SECRET_KEY)
 
 @app.on_event("startup")
 async def startup_event():
@@ -20,7 +24,19 @@ async def startup_event():
 
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    user_cookie = request.cookies.get("session")
+    user = None
+
+    if user_cookie:
+        try:
+            user = serializer.loads(user_cookie)
+        except:
+            user = None
+
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "user": user}
+    )
 
 @app.get("/login")
 async def login():
@@ -36,6 +52,7 @@ async def login():
 @app.get("/auth/callback")
 async def callback(code: str):
     async with httpx.AsyncClient() as client:
+        # Exchange code
         token_res = await client.post(
             "https://discord.com/api/oauth2/token",
             data={
@@ -51,11 +68,60 @@ async def callback(code: str):
         token_data = token_res.json()
         access_token = token_data.get("access_token")
 
+        # Get user info
         user_res = await client.get(
             "https://discord.com/api/users/@me",
             headers={"Authorization": f"Bearer {access_token}"}
         )
-
         user = user_res.json()
 
-    return HTMLResponse(f"<h1>Logged in as {user['username']}</h1>")
+        # Get user guilds
+        guild_res = await client.get(
+            "https://discord.com/api/users/@me/guilds",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        guilds = guild_res.json()
+
+    # Filter guilds (owner or manage_guild permission)
+    manageable_guilds = []
+
+    for guild in guilds:
+        permissions = int(guild["permissions"])
+        is_owner = guild["owner"]
+        can_manage = permissions & 0x20  # MANAGE_GUILD permission
+
+        if is_owner or can_manage:
+            manageable_guilds.append(guild)
+
+    session_data = {
+        "id": user["id"],
+        "username": user["username"],
+        "avatar": user.get("avatar"),
+        "guilds": manageable_guilds
+    }
+
+    response = RedirectResponse(url="/dashboard")
+    response.set_cookie(
+        key="session",
+        value=serializer.dumps(session_data),
+        httponly=True
+    )
+
+    return response
+
+@app.get("/dashboard")
+async def dashboard(request: Request):
+    user_cookie = request.cookies.get("session")
+
+    if not user_cookie:
+        return RedirectResponse("/")
+
+    try:
+        user = serializer.loads(user_cookie)
+    except:
+        return RedirectResponse("/")
+
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": user}
+    )
