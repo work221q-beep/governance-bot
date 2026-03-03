@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+    <h1>Welcome {{ user.username }}</h1>
+
+    <h2>Your Manageable Servers:</h2>
+
+    <ul>
+        {% for guild in user.guilds %}
+            <li>
+                {{ guild.name }} (ID: {{ guild.id }})
+            </li>
+        {% endfor %}
+    </ul>
+
+    <br>
+    <a href="/">Back Home</a>
+</body>
+</html>
