@@ -20,10 +20,39 @@ SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 serializer = URLSafeSerializer(SECRET_KEY)
 
 
+# -----------------------
+# Background Scheduler
+# -----------------------
+
+async def background_scheduler():
+    while True:
+        try:
+            print("Background check running...")
+            # Future: add decay logic here
+        except Exception as e:
+            print("Scheduler error:", e)
+
+        await asyncio.sleep(3600)  # every hour
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(start_bot())
+    asyncio.create_task(background_scheduler())
 
+
+# -----------------------
+# Health Check Endpoint
+# -----------------------
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# -----------------------
+# Web Routes
+# -----------------------
 
 @app.get("/")
 async def home(request: Request):
@@ -109,100 +138,3 @@ async def callback(code: str):
     )
 
     return response
-
-
-@app.get("/dashboard")
-async def dashboard(request: Request):
-    user_cookie = request.cookies.get("session")
-
-    if not user_cookie:
-        return RedirectResponse("/")
-
-    try:
-        user = serializer.loads(user_cookie)
-    except:
-        return RedirectResponse("/")
-
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "user": user}
-    )
-
-
-@app.get("/server/{guild_id}")
-async def server_panel(request: Request, guild_id: str):
-    user_cookie = request.cookies.get("session")
-
-    if not user_cookie:
-        return RedirectResponse("/")
-
-    try:
-        user = serializer.loads(user_cookie)
-    except:
-        return RedirectResponse("/")
-
-    allowed = False
-    guild_name = None
-
-    for guild in user["guilds"]:
-        if guild["id"] == guild_id:
-            allowed = True
-            guild_name = guild["name"]
-            break
-
-    if not allowed:
-        return HTMLResponse("Access Denied", status_code=403)
-
-    config = await get_server_config(guild_id)
-    models = await get_available_models()
-
-    return templates.TemplateResponse(
-        "server.html",
-        {
-            "request": request,
-            "guild_id": guild_id,
-            "guild_name": guild_name,
-            "config": config,
-            "models": models
-        }
-    )
-
-
-@app.post("/server/{guild_id}/update")
-async def update_server(
-    request: Request,
-    guild_id: str,
-    prefix: str = Form(...),
-    temperature: float = Form(...),
-    model: str = Form(...),
-    ai_enabled: str = Form(None),
-    respond_every_message: str = Form(None)
-):
-    user_cookie = request.cookies.get("session")
-
-    if not user_cookie:
-        return RedirectResponse("/")
-
-    try:
-        user = serializer.loads(user_cookie)
-    except:
-        return RedirectResponse("/")
-
-    allowed = any(g["id"] == guild_id for g in user["guilds"])
-    if not allowed:
-        return HTMLResponse("Access Denied", status_code=403)
-
-    await configs.update_one(
-        {"server_id": guild_id},
-        {
-            "$set": {
-                "prefix": prefix,
-                "temperature": temperature,
-                "model": model,
-                "ai_enabled": bool(ai_enabled),
-                "respond_every_message": bool(respond_every_message)
-            }
-        }
-    )
-
-    return RedirectResponse(f"/server/{guild_id}", status_code=303)
