@@ -14,17 +14,16 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ------------------
-# Cooldowns
-# ------------------
-
 USER_COOLDOWN_SECONDS = 30
 PAIR_COOLDOWN_SECONDS = 120
 
 user_last_event = {}
 pair_last_event = {}
 
-CLAIM_REGEX = re.compile(r"\b(i beat|i destroyed|i 3-0d|i smoked)\b", re.IGNORECASE)
+CLAIM_REGEX = re.compile(
+    r"\b(i beat|i destroyed|i 3-0d|i smoked)\b",
+    re.IGNORECASE
+)
 
 
 @bot.event
@@ -34,10 +33,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
-
-    if not message.guild:
+    if message.author.bot or not message.guild:
         return
 
     if not CLAIM_REGEX.search(message.content):
@@ -54,25 +50,22 @@ async def on_message(message):
 
     now = datetime.utcnow()
 
-    # ---- User cooldown
+    # ---- USER COOLDOWN
     last_time = user_last_event.get(actor_id)
     if last_time and (now - last_time).total_seconds() < USER_COOLDOWN_SECONDS:
         return
-
     user_last_event[actor_id] = now
 
-    # ---- Pair cooldown
+    # ---- PAIR COOLDOWN
     pair_key = f"{actor_id}:{target_id}"
     last_pair = pair_last_event.get(pair_key)
-
     if last_pair and (now - last_pair).total_seconds() < PAIR_COOLDOWN_SECONDS:
         return
-
     pair_last_event[pair_key] = now
 
-    # ---- Ensure players
-    actor = await ensure_player(actor_id, actor_name)
-    target_player = await ensure_player(target_id, target_name)
+    # ---- ENSURE PLAYERS
+    await ensure_player(actor_id, actor_name)
+    await ensure_player(target_id, target_name)
 
     verdict = await arbitrate_claim(actor_name, target_name, message.content)
 
@@ -90,7 +83,7 @@ async def on_message(message):
         )
 
         await message.reply(
-            f"⚖️ VERIFIED. {actor_name} gains credibility. {target_name} fraud +5."
+            f"⚖️ VERIFIED. {actor_name} credibility +5. {target_name} fraud +5."
         )
 
     else:
@@ -111,7 +104,3 @@ async def on_message(message):
         "confidence": verdict["confidence"],
         "createdAt": now
     })
-
-
-async def start_bot():
-    await bot.start(DISCORD_TOKEN)
