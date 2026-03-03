@@ -7,11 +7,11 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 from bot import start_bot
 from db import get_server_config, configs
+from ai import get_available_models
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Environment variables
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
@@ -38,10 +38,7 @@ async def home(request: Request):
 
     return templates.TemplateResponse(
         "index.html",
-        {
-            "request": request,
-            "user": user
-        }
+        {"request": request, "user": user}
     )
 
 
@@ -60,7 +57,6 @@ async def login():
 @app.get("/auth/callback")
 async def callback(code: str):
     async with httpx.AsyncClient() as client:
-
         token_res = await client.post(
             "https://discord.com/api/oauth2/token",
             data={
@@ -94,7 +90,7 @@ async def callback(code: str):
     for guild in guilds:
         permissions = int(guild["permissions"])
         is_owner = guild["owner"]
-        can_manage = permissions & 0x20  # MANAGE_GUILD
+        can_manage = permissions & 0x20
 
         if is_owner or can_manage:
             manageable_guilds.append(guild)
@@ -102,14 +98,13 @@ async def callback(code: str):
     session_data = {
         "id": user["id"],
         "username": user["username"],
-        "avatar": user.get("avatar"),
         "guilds": manageable_guilds
     }
 
     response = RedirectResponse(url="/dashboard")
     response.set_cookie(
-        key="session",
-        value=serializer.dumps(session_data),
+        "session",
+        serializer.dumps(session_data),
         httponly=True
     )
 
@@ -130,10 +125,7 @@ async def dashboard(request: Request):
 
     return templates.TemplateResponse(
         "dashboard.html",
-        {
-            "request": request,
-            "user": user
-        }
+        {"request": request, "user": user}
     )
 
 
@@ -162,15 +154,16 @@ async def server_panel(request: Request, guild_id: str):
         return HTMLResponse("Access Denied", status_code=403)
 
     config = await get_server_config(guild_id)
+    models = await get_available_models()
 
     return templates.TemplateResponse(
         "server.html",
         {
             "request": request,
-            "user": user,
             "guild_id": guild_id,
             "guild_name": guild_name,
-            "config": config
+            "config": config,
+            "models": models
         }
     )
 
@@ -181,6 +174,7 @@ async def update_server(
     guild_id: str,
     prefix: str = Form(...),
     temperature: float = Form(...),
+    model: str = Form(...),
     ai_enabled: str = Form(None),
     respond_every_message: str = Form(None)
 ):
@@ -204,13 +198,11 @@ async def update_server(
             "$set": {
                 "prefix": prefix,
                 "temperature": temperature,
+                "model": model,
                 "ai_enabled": bool(ai_enabled),
                 "respond_every_message": bool(respond_every_message)
             }
         }
     )
 
-    return RedirectResponse(
-        url=f"/server/{guild_id}",
-        status_code=303
-    )
+    return RedirectResponse(f"/server/{guild_id}", status_code=303)
