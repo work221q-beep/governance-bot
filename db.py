@@ -11,8 +11,10 @@ servers = db["servers"]
 configs = db["configs"]
 logs = db["logs"]
 
+
 async def get_server_config(server_id: str):
     config = await configs.find_one({"server_id": server_id})
+
     if not config:
         default = {
             "server_id": server_id,
@@ -20,10 +22,11 @@ async def get_server_config(server_id: str):
             "ai_enabled": True,
             "respond_every_message": False,
             "allowed_channels": [],
-            "model": "llama3",
+            "model": "phi3:mini",   # ✅ CHANGED HERE
             "temperature": 0.7,
             "rate_limit_per_min": 10
         }
         await configs.insert_one(default)
         return default
+
     return config
