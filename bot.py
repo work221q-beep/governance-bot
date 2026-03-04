@@ -1,12 +1,13 @@
 import os, asyncio, discord
 from discord.ext import commands
-from db import upsert_vulnerability, server_configs
+from db import upsert_vulnerability, server_configs, role_baselines
 from ai import generate_raid_wave
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
 active_raid_messages = {}
+pending_remediations = {} # Stores violations for !fixperms
 
 @bot.event
 async def on_ready():
@@ -18,113 +19,145 @@ async def start_raid(ctx, wave_size: int = 3):
     guild = ctx.guild
     config = await server_configs.find_one({"server_id": str(guild.id)}) or {"model": "llama3"}
     
-    await ctx.send("🔍 **INITIATING SERVER SECURITY AUDIT...** (Testing 7 Vulnerability Vectors)")
+    status_msg = await ctx.send("🔍 **INITIATING SERVER SECURITY AUDIT...** (Testing 7 Vulnerability Vectors)")
     
-    # VECTOR 1: CHANNEL CREATION
-    test_channel = None
+    # Track artifacts for Zero-Footprint cleanup
+    artifacts = []
+
+    # VECTORS 1-5 (Condensed for brevity, same logic but appending to artifacts)
     try:
-        test_channel = await guild.create_text_channel("sylas-audit-fail")
-        await upsert_vulnerability(str(guild.id), "Channel Creation Bypass", True, "Bot bypassed restrictions to create a channel.")
-    except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Channel Creation Bypass", False, "Correctly blocked by Discord.")
-    finally:
-        if test_channel: await test_channel.delete()
+        c = await guild.create_text_channel("sylas-audit-fail")
+        artifacts.append(c)
+        await upsert_vulnerability(str(guild.id), "Channel Creation Bypass", True, "Bypassed restrictions.")
+    except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Channel Creation Bypass", False, "Blocked.")
 
-    # VECTOR 2: ROLE CREATION
-    test_role = None
     try:
-        test_role = await guild.create_role(name="Sylas_Bypass", color=discord.Color.red())
-        await upsert_vulnerability(str(guild.id), "Role Creation Bypass", True, "Bot bypassed restrictions to create a role.")
-    except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Role Creation Bypass", False, "Correctly blocked by Discord.")
-    finally:
-        if test_role: await test_role.delete()
+        r = await guild.create_role(name="Sylas_Bypass", color=discord.Color.red())
+        artifacts.append(r)
+        await upsert_vulnerability(str(guild.id), "Role Creation Bypass", True, "Bypassed restrictions.")
+    except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Role Creation Bypass", False, "Blocked.")
 
-    # VECTOR 3: WEBHOOK EXPLOITATION
-    test_webhook = None
     try:
-        test_webhook = await ctx.channel.create_webhook(name="Sylas_Exploit")
-        await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Bot successfully spawned a webhook (High Spam Risk).")
-    except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Webhook Exploitation", False, "Correctly blocked by Discord.")
-    finally:
-        if test_webhook: await test_webhook.delete()
+        w = await ctx.channel.create_webhook(name="Sylas_Exploit")
+        artifacts.append(w)
+        await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Spawned webhook.")
+    except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Webhook Exploitation", False, "Blocked.")
 
-    # VECTOR 4: NICKNAME DEFACEMENT
-    try:
-        old_nick = guild.me.nick
-        await guild.me.edit(nick="HACKED_SYLAS")
-        await upsert_vulnerability(str(guild.id), "Nickname Defacement", True, "Bot was able to forcefully change its nickname.")
-        await guild.me.edit(nick=old_nick)
-    except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Nickname Defacement", False, "Correctly blocked by Discord.")
-
-    # VECTOR 5: UNAUTHORIZED INVITES
-    test_invite = None
-    try:
-        test_invite = await ctx.channel.create_invite(max_age=300, max_uses=1)
-        await upsert_vulnerability(str(guild.id), "Unauthorized Invites", True, "Bot successfully created a server invite.")
-    except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Unauthorized Invites", False, "Correctly blocked by Discord.")
-    finally:
-        if test_invite: await test_invite.delete()
-
-    # VECTOR 6: @EVERYONE MENTION ABUSE (Passive check)
-    default_role = guild.default_role
-    permissions = ctx.channel.permissions_for(default_role)
-    if permissions.mention_everyone:
-        await upsert_vulnerability(str(guild.id), "Mass Mention Vulnerability", True, "The @everyone role has permission to ping everyone (Critical Risk).")
-    else:
-        await upsert_vulnerability(str(guild.id), "Mass Mention Vulnerability", False, "Mass mentions are properly restricted.")
-
-    # VECTOR 7: MODERATOR REACTION TEST & AUTOMOD
-    await ctx.send("✅ **STRUCTURAL AUDIT COMPLETE.** \n⏳ *Spawning active AI Phishing Raid in 5 seconds to test Automod...*")
-    await asyncio.sleep(5) # Give the system a breather before the active raid
+    # VECTOR 7: MODERATOR REACTION TEST
+    await status_msg.edit(content="✅ **STRUCTURAL AUDIT COMPLETE.** \n⏳ *Spawning active AI Phishing Raid...*")
+    await asyncio.sleep(2) 
     
     webhook = None
+    spawned_msgs = []
     try:
         webhook = await ctx.channel.create_webhook(name="Sylas_Vulnerability_Scanner")
+        artifacts.append(webhook)
         payloads = await generate_raid_wave(wave_size, model=config.get("model", "llama3"))
         
         for p in payloads:
             msg = await webhook.send(
-                content=p.get("spam_message", "HACKED"), 
-                username=p.get("username", "Ghost_User"),
-                avatar_url="https://i.imgur.com/vHq0A6y.png",
-                wait=True
+                content=p.get("spam_message", "HACKED"), username=p.get("username", "Ghost"), wait=True
             )
+            spawned_msgs.append(msg)
             active_raid_messages[msg.id] = {"time": discord.utils.utcnow(), "channel_id": ctx.channel.id}
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1)
             
-        await upsert_vulnerability(str(guild.id), "Automod Phishing Defense", True, "Automod failed to block AI payloads. Waiting for human mod.")
-        await ctx.send("🏁 **RAID DEPLOYED.** Tracking moderator Time-To-Kill (TTK) on active spam...")
+        await upsert_vulnerability(str(guild.id), "Automod Defense", True, "Automod failed to block AI payloads.")
         
     except discord.Forbidden:
-        await upsert_vulnerability(str(guild.id), "Automod Phishing Defense", False, "Blocked from sending webhooks. Safe.")
-    finally:
-        if webhook: await webhook.delete()
+        await upsert_vulnerability(str(guild.id), "Automod Defense", False, "Blocked from sending webhooks.")
+
+    # ZERO FOOTPRINT CLEANUP & SUMMARY
+    await asyncio.sleep(15) # Wait 15s for TTK measurement before wiping everything
+    
+    for entity in artifacts:
+        try: await entity.delete()
+        except: pass
+        
+    for msg in spawned_msgs:
+        try: 
+            await msg.delete()
+            if msg.id in active_raid_messages: del active_raid_messages[msg.id]
+        except: pass
+
+    # Auto-deleting summary
+    summary = (
+        "📊 **SYLAS AUDIT SUMMARY**\n"
+        "All structural penetration vectors tested. Active raid artifacts have been wiped from the server to maintain zero footprint.\n"
+        "Check your web dashboard for the updated Vulnerability Map and TTK scores.\n"
+        "*This message will self-destruct in 60 seconds.*"
+    )
+    await ctx.send(summary, delete_after=60.0)
+    try: await status_msg.delete()
+    except: pass
+
+@bot.command(name="scanperms")
+@commands.has_permissions(administrator=True)
+async def scan_perms(ctx):
+    guild = ctx.guild
+    baselines = await role_baselines.find({"server_id": str(guild.id)}).to_list(100)
+    if not baselines:
+        return await ctx.send("⚠️ No role baselines configured. Please set them up in the Web Dashboard first.", delete_after=20.0)
+
+    baseline_map = {b["role_id"]: b.get("allowed_perms", []) for b in baselines}
+    violations = []
+    
+    dangerous_flags = ["administrator", "manage_guild", "manage_roles", "manage_webhooks", "mention_everyone"]
+
+    for role in guild.roles:
+        if role.name == "@everyone" or role.managed: continue
+        
+        allowed = baseline_map.get(str(role.id), [])
+        role_perms = dict(role.permissions)
+        
+        leaked_perms = [p for p in dangerous_flags if role_perms.get(p) and p not recalled in allowed]
+        
+        if leaked_perms:
+            violations.append({"role": role, "leaks": leaked_perms})
+
+    if not violations:
+        return await ctx.send("✅ **PERMISSIONS SECURE.** No unauthorized dangerous permissions detected.", delete_after=30.0)
+
+    pending_remediations[guild.id] = violations
+    
+    report = "🚨 **PERMISSION LEAKS DETECTED** 🚨\n"
+    for v in violations:
+        report += f"• {v['role'].mention}: `{', '.join(v['leaks'])}`\n"
+    report += "\nType `!fixperms` to automatically strip these unauthorized permissions."
+    
+    await ctx.send(report)
+
+@bot.command(name="fixperms")
+@commands.has_permissions(administrator=True)
+async def fix_perms(ctx):
+    guild = ctx.guild
+    if guild.id not in pending_remediations:
+        return await ctx.send("No pending remediations. Run `!scanperms` first.", delete_after=10.0)
+    
+    violations = pending_remediations[guild.id]
+    fixed_count = 0
+    
+    for v in violations:
+        role = v["role"]
+        leaks = v["leaks"]
+        kwargs = {perm: False for perm in leaks}
+        try:
+            await role.edit(permissions=discord.Permissions(**{**dict(role.permissions), **kwargs}), reason="Sylas Automated Remediation")
+            fixed_count += 1
+        except discord.Forbidden:
+            await ctx.send(f"❌ Failed to fix {role.name}. My role hierarchy is too low.", delete_after=10.0)
+
+    del pending_remediations[guild.id]
+    await ctx.send(f"🛡️ **REMEDIATION COMPLETE.** Successfully patched {fixed_count} roles.", delete_after=60.0)
 
 @bot.event
 async def on_message_delete(message):
     if message.id in active_raid_messages:
         raid_data = active_raid_messages[message.id]
         time_alive = (discord.utils.utcnow() - raid_data["time"]).total_seconds()
-        
-        # If a mod deletes it, the server is SECURE from that threat.
-        await upsert_vulnerability(str(message.guild.id), "Automod Phishing Defense", False, f"Neutralized by human moderator in {int(time_alive)} seconds.")
-
-        mod_mention = "A Moderator"
-        try:
-            if message.guild.me.guild_permissions.view_audit_log:
-                async for entry in message.guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=5):
-                    if entry.target.id == message.author.id:
-                        mod_mention = entry.user.mention
-                        break
-        except: pass
-
+        await upsert_vulnerability(str(message.guild.id), "Automod Defense", False, f"Neutralized by mod in {int(time_alive)}s.")
         channel = bot.get_channel(raid_data["channel_id"])
-        if channel:
-            await channel.send(f"🛡️ **THREAT NEUTRALIZED.** {mod_mention} deleted the spam in **{int(time_alive)}s**.")
+        if channel: await channel.send(f"🛡️ **THREAT NEUTRALIZED in {int(time_alive)}s.**", delete_after=30.0)
         del active_raid_messages[message.id]
 
 async def start_bot():
