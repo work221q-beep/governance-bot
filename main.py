@@ -19,8 +19,6 @@ DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123") 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-
-# YOUR DISCORD ID GOES HERE
 MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID", "YOUR_DISCORD_ID_HERE") 
 
 @app.on_event("startup")
@@ -84,28 +82,27 @@ async def admin_panel(request: Request, key: str = None):
     ollama_status = "OFFLINE"
     try:
         async with httpx.AsyncClient(timeout=2.0) as c:
-            res = await c.get(f"{OLLAMA_URL}/api/tags")
-            if res.status_code == 200: ollama_status = "ONLINE"
+            if (await c.get(f"{OLLAMA_URL}/api/tags")).status_code == 200: ollama_status = "ONLINE"
     except: pass
 
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     
-    # Raw DB Fetch for the Explorer
-    vulns = await vuln_state.find().sort("last_tested", -1).to_list(50)
-    configs = await server_configs.find().to_list(50)
+    # SUDO DB FETCH: Dynamically pull every collection inside the database
+    db = payload_armory.database
+    collection_names = await db.list_collection_names()
     
-    # Convert ObjectIds AND DateTimes to strings so Jinja can render the JSON safely
-    for v in vulns: 
-        v["_id"] = str(v["_id"])
-        if "last_tested" in v and isinstance(v["last_tested"], datetime.datetime):
-            v["last_tested"] = v["last_tested"].isoformat()
-            
-    for c in configs: 
-        c["_id"] = str(c["_id"])
+    db_structure = {}
+    for coll_name in collection_names:
+        docs = await db[coll_name].find().sort("_id", -1).to_list(100)
+        for d in docs: 
+            d["_id"] = str(d["_id"])
+            for k, v in d.items():
+                if isinstance(v, datetime.datetime): d[k] = v.isoformat()
+        db_structure[coll_name] = docs
     
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "ollama_status": ollama_status, "vulns": vulns, "configs": configs
+        "ollama_status": ollama_status, "db_structure": db_structure
     })
 
 @app.post("/admin/toggle_bot")
@@ -133,26 +130,32 @@ async def admin_purge_armory(request: Request):
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
-# 🗄️ RAW DATABASE EXPLORER ENDPOINTS
-@app.post("/admin/db/delete/{collection}/{doc_id}")
-async def admin_db_delete(request: Request, collection: str, doc_id: str):
+@app.post("/admin/db/delete_doc/{collection}/{doc_id}")
+async def admin_db_delete_doc(request: Request, collection: str, doc_id: str):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
-    if collection == "vulns": await vuln_state.delete_one({"_id": ObjectId(doc_id)})
-    elif collection == "configs": await server_configs.delete_one({"_id": ObjectId(doc_id)})
+    db = payload_armory.database
+    await db[collection].delete_one({"_id": ObjectId(doc_id)})
     return RedirectResponse("/admin?tab=db", status_code=303)
 
-@app.post("/admin/db/edit/{collection}/{doc_id}")
-async def admin_db_edit(request: Request, collection: str, doc_id: str):
+@app.post("/admin/db/drop_collection/{collection}")
+async def admin_drop_collection(request: Request, collection: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    db = payload_armory.database
+    await db[collection].drop()
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/db/edit_doc/{collection}/{doc_id}")
+async def admin_db_edit_doc(request: Request, collection: str, doc_id: str):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     form_data = await request.form()
     raw_json = form_data.get("raw_json")
     try:
         parsed = json.loads(raw_json)
         parsed.pop("_id", None) 
-        if collection == "vulns": await vuln_state.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
-        elif collection == "configs": await server_configs.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
+        db = payload_armory.database
+        await db[collection].update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
     except Exception as e:
-        print(f"Failed to save DB Edit: {e}")
+        print(f"DB Edit Error: {e}")
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 # ==========================================
