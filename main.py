@@ -1,11 +1,10 @@
-import os, asyncio, httpx
+import os, asyncio, httpx, discord
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
-from datetime import datetime
-from bot import start_bot, bot # Importing bot to access Discord cache
-from db import init_indexes, server_configs, vuln_state, role_baselines
+from bot import start_bot, bot 
+from db import init_indexes, server_configs, vuln_state
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -23,16 +22,8 @@ async def startup_event():
 @app.get("/")
 async def home(request: Request):
     user_cookie = request.cookies.get("session")
-    user = None
-    if user_cookie:
-        try: user = serializer.loads(user_cookie)
-        except: user = None
+    user = serializer.loads(user_cookie) if user_cookie else None
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
-
-@app.get("/invite")
-async def invite_bot():
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
-    return RedirectResponse(url)
 
 @app.get("/login")
 async def login():
@@ -47,79 +38,68 @@ async def callback(code: str):
             "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI
         })
         access_token = token_res.json().get("access_token")
-        user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
-        guild_res = await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})
-        user, guilds = user_res.json(), guild_res.json()
+        user = (await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})).json()
+        guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
 
-    # STRICT ENFORCEMENT: Only allow guilds where user is Administrator (0x8) or Owner
+    # STRICT: Administrator or Owner ONLY
     manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
-    session_data = {"id": user["id"], "username": user["username"], "guilds": manageable_guilds}
     response = RedirectResponse(url="/dashboard")
-    response.set_cookie("session", serializer.dumps(session_data), httponly=True)
+    response.set_cookie("session", serializer.dumps({"id": user["id"], "username": user["username"], "guilds": manageable_guilds}), httponly=True)
     return response
 
 @app.get("/dashboard")
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    try: user = serializer.loads(user_cookie)
-    except: return RedirectResponse("/")
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": serializer.loads(user_cookie)})
 
 @app.get("/server/{guild_id}")
 async def server_panel(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    try: user = serializer.loads(user_cookie)
-    except: return RedirectResponse("/")
-    allowed = any(g["id"] == guild_id for g in user["guilds"])
-    if not allowed: return HTMLResponse("Access Denied: Administrator Required", status_code=403)
     
-    config = await server_configs.find_one({"server_id": guild_id}) or {"model": "llama3"}
-    models = ["phi3:mini", "llama3", "mistral"] 
-
-    # Fetch live roles from the Discord Bot Cache
     guild = bot.get_guild(int(guild_id))
     roles = []
+    
     if guild:
-        baselines = await role_baselines.find({"server_id": guild_id}).to_list(100)
-        baseline_map = {b["role_id"]: b.get("allowed_perms", []) for b in baselines}
-        
-        for r in guild.roles:
+        # Pass the EXACT current state of Discord to the Web UI
+        for r in reversed(guild.roles): # Reversed so highest roles show first
             if r.name != "@everyone" and not r.managed:
+                current_perms = [perm[0] for perm in r.permissions if perm[1] is True]
                 roles.append({
                     "id": str(r.id), 
                     "name": r.name, 
-                    "allowed": baseline_map.get(str(r.id), [])
+                    "color": str(r.color) if r.color.value != 0 else "#71717a",
+                    "current": current_perms
                 })
     
-    return templates.TemplateResponse("server.html", {
-        "request": request, "guild_id": guild_id, "config": config, "models": models, "roles": roles, "bot_in_server": bool(guild)
-    })
+    return templates.TemplateResponse("server.html", {"request": request, "guild_id": guild_id, "roles": roles, "bot_in_server": bool(guild)})
 
-@app.post("/server/{guild_id}/update")
-async def update_server(request: Request, guild_id: str):
+@app.post("/server/{guild_id}/sync")
+async def sync_server_permissions(request: Request, guild_id: str):
+    """The Live Sync Engine: Rewrites Discord permissions instantly based on Web UI selection."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     
     form_data = await request.form()
-    prefix = form_data.get("prefix", "!")
-    model = form_data.get("model", "llama3")
-    
-    await server_configs.update_one({"server_id": guild_id}, {"$set": {"prefix": prefix, "model": model}}, upsert=True)
-
-    # Process Role Permissions
     guild = bot.get_guild(int(guild_id))
+    
     if guild:
         for r in guild.roles:
             if r.name != "@everyone" and not r.managed:
-                # Get all checked checkboxes for this specific role
-                allowed_perms = form_data.getlist(f"perms_{r.id}")
-                await role_baselines.update_one(
-                    {"server_id": guild_id, "role_id": str(r.id)},
-                    {"$set": {"allowed_perms": allowed_perms}},
-                    upsert=True
-                )
+                # Get the checked boxes from the web form for this role
+                selected_perms = form_data.getlist(f"perms_{r.id}")
+                
+                # We need to construct a new Permissions object. 
+                # Start with everything False, then only enable what was checked.
+                all_discord_perms = [p[0] for p in discord.Permissions()]
+                new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
+                
+                try:
+                    # Instantly override Discord
+                    await r.edit(permissions=discord.Permissions(**new_kwargs), reason="Sylas Enterprise: Live Web Sync")
+                except discord.Forbidden:
+                    print(f"Failed to edit {r.name}. Ensure Sylas role is at the top of the hierarchy.")
 
     return RedirectResponse(f"/server/{guild_id}", status_code=303)
 
@@ -128,9 +108,5 @@ async def server_audit(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     vulns = await vuln_state.find({"server_id": guild_id}).to_list(100)
-    total_tests = len(vulns)
-    secure_tests = sum(1 for v in vulns if v["status"] == "SECURE")
-    security_score = int((secure_tests / total_tests) * 100) if total_tests > 0 else 100
-    return templates.TemplateResponse("leaderboard.html", {
-        "request": request, "guild_id": guild_id, "vulns": vulns, "score": security_score
-    })
+    score = int((sum(1 for v in vulns if v["status"] == "SECURE") / len(vulns)) * 100) if vulns else 100
+    return templates.TemplateResponse("leaderboard.html", {"request": request, "guild_id": guild_id, "vulns": vulns, "score": score})
