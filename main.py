@@ -1,9 +1,10 @@
-import os, asyncio, httpx, discord
-from fastapi import FastAPI, Request, Form, BackgroundTasks, Depends
+import os, asyncio, httpx, discord, datetime
+from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 from bson import ObjectId
+import urllib.parse
 
 from bot import start_bot, bot, engine_state 
 from ai import harvest_loop, harvest_payloads
@@ -16,7 +17,6 @@ serializer = URLSafeSerializer(os.getenv("SECRET_KEY", "supersecret"))
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
-# Set this in your Render Environment Variables!
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123") 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
@@ -37,6 +37,12 @@ async def login():
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={DISCORD_REDIRECT_URI}&scope=identify%20guilds"
     return RedirectResponse(url)
 
+@app.get("/invite")
+async def invite_bot():
+    # STRICTLY ENFORCES ADMINISTRATOR (8) ON INVITE
+    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
+    return RedirectResponse(url)
+
 @app.get("/auth/callback")
 async def callback(code: str):
     async with httpx.AsyncClient() as client:
@@ -48,7 +54,6 @@ async def callback(code: str):
         user = (await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})).json()
         guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
 
-    # Base Security: Must be an Admin or Owner to even log into the dashboard
     manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
     response = RedirectResponse(url="/dashboard")
     response.set_cookie("session", serializer.dumps({"id": user["id"], "username": user["username"], "guilds": manageable_guilds}), httponly=True)
@@ -65,16 +70,13 @@ async def dashboard(request: Request):
 # ==========================================
 @app.get("/admin")
 async def admin_panel(request: Request, key: str = None):
-    # Secure Login via URL Parameter: ?key=your_password
     admin_auth = request.cookies.get("admin_auth")
     if key == ADMIN_KEY:
         response = RedirectResponse("/admin")
         response.set_cookie("admin_auth", "true", httponly=True)
         return response
-    if admin_auth != "true":
-        return HTMLResponse("Unauthorized - Invalid Master Key", status_code=403)
+    if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
 
-    # Ping AWS Ollama VM Live Status
     ollama_status = "OFFLINE"
     try:
         async with httpx.AsyncClient(timeout=2.0) as c:
@@ -121,37 +123,29 @@ async def server_panel(request: Request, guild_id: str):
 
 @app.post("/server/{guild_id}/sync")
 async def sync_server_permissions(request: Request, guild_id: str):
-    """
-    Role Sync: The bot acts as the Admin's right hand. 
-    It executes the role changes using its own maximum permissions.
-    """
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     
     session_user = serializer.loads(user_cookie)
+    web_username = session_user.get("username")
+    
     form_data = await request.form()
     guild = bot.get_guild(int(guild_id))
     
     if guild:
         for r in guild.roles:
-            if r.name == "@everyone" or r.managed: continue
-            
-            if f"perms_{r.id}" in form_data:
-                selected_perms = form_data.getlist(f"perms_{r.id}")
-                all_discord_perms = [p[0] for p in discord.Permissions()]
-                new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
-                
-                try: 
-                    # The bot executes the will of the dashboard user
-                    await r.edit(permissions=discord.Permissions(**new_kwargs), reason=f"Sylas Web Sync (Authorized by {session_user.get('username')})")
-                except discord.Forbidden: 
-                    print(f"Bot lacks absolute hierarchy to edit role: {r.name}")
+            selected_perms = form_data.getlist(f"perms_{r.id}")
+            all_discord_perms = [p[0] for p in discord.Permissions()]
+            new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
+            try: 
+                # Bot uses its absolute power to execute the change
+                await r.edit(permissions=discord.Permissions(**new_kwargs), reason=f"Sylas Web Sync (By {web_username})")
+            except discord.Forbidden: pass
 
     return RedirectResponse(f"/server/{guild_id}", status_code=303)
 
 @app.get("/server/{guild_id}/permissions")
 async def permissions_manager(request: Request, guild_id: str):
-    """The Advanced Permission Manager for 100k servers."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     guild = bot.get_guild(int(guild_id))
@@ -159,40 +153,55 @@ async def permissions_manager(request: Request, guild_id: str):
     
     if guild:
         roles = [{"id": str(r.id), "name": r.name, "color": str(r.color) if r.color.value != 0 else None} for r in reversed(guild.roles)]
-        
         for m in guild.members[:500]:
             member_data = {"id": str(m.id), "name": m.display_name, "avatar": m.display_avatar.url if m.display_avatar else None}
             if m.bot: bots.append(member_data)
             else: users.append(member_data)
-            
         for c in guild.channels:
             channels.append({"id": str(c.id), "name": c.name, "type": str(c.type)})
             
     return templates.TemplateResponse("permissions.html", {"request": request, "guild_id": guild_id, "roles": roles, "users": users, "bots": bots, "channels": channels, "guild_name": guild.name if guild else "Unknown"})
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
-async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
-    """
-    Direct Mod Actions: The bot uses its top-tier authority to execute 
-    punishments dictated by the dashboard user, making management seamless.
-    """
+async def mod_action(request: Request, guild_id: str, action: str, target_id: str, tab: str = "users"):
+    """Executes absolute moderation commands, prompts for reasons, and returns visual toast feedback."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     
     session_user = serializer.loads(user_cookie)
+    web_username = session_user.get("username")
+    
+    form_data = await request.form()
+    reason = form_data.get("reason", "No reason provided")
+    full_reason = f"{reason} (via Web Admin: {web_username})"
+    
     guild = bot.get_guild(int(guild_id))
+    msg = "❌ Action failed: Guild not found."
     
     if guild:
         target = guild.get_member(int(target_id))
         if target:
-            try:
-                if action == "kick": 
-                    await target.kick(reason=f"Sylas Web Admin (Authorized by {session_user.get('username')})")
-                elif action == "ban": 
-                    await target.ban(reason=f"Sylas Web Admin (Authorized by {session_user.get('username')})")
-                elif action == "timeout": 
-                    await target.timeout(discord.utils.utcnow() + discord.utils.timedelta(minutes=10), reason=f"Sylas Web Admin (Authorized by {session_user.get('username')})")
-            except discord.Forbidden: 
-                print(f"Bot lacks absolute hierarchy to {action} user: {target.name}")
+            # Check if Discord physical limits block the bot
+            if guild.me.top_role <= target.top_role:
+                msg = f"❌ Action blocked: The Sylas Bot role is lower than {target.name}'s role. Move my role higher!"
+            else:
+                try:
+                    if action == "kick": 
+                        await target.kick(reason=full_reason)
+                        msg = f"✅ Kicked {target.name}. Reason: {reason}"
+                    elif action == "ban": 
+                        await target.ban(reason=full_reason)
+                        msg = f"✅ Banned {target.name}. Reason: {reason}"
+                    elif action == "timeout": 
+                        await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=full_reason)
+                        msg = f"✅ Timed out {target.name} for 10 minutes. Reason: {reason}"
+                except discord.Forbidden:
+                    msg = "❌ Action blocked: I lack Discord permissions."
+                except Exception as e:
+                    msg = f"❌ Internal Error: {str(e)}"
+        else:
+            msg = "❌ User not found in server."
 
-    return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
+    safe_msg = urllib.parse.quote(msg)
+    # Redirects back to the EXACT tab you were on, carrying the success message
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&msg={safe_msg}", status_code=303)
