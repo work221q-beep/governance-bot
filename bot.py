@@ -46,9 +46,12 @@ async def on_message(message):
             await players.update_one({"server_id": server_id, "discord_id": actor_id}, {"$inc": {"credibility": 5}, "$set": {"lastActive": now}})
             await players.update_one({"server_id": server_id, "discord_id": target_id}, {"$inc": {"fraudIndex": 5}, "$set": {"lastActive": now}})
             await message.reply("⚖️ **VERIFIED**. Stats updated.")
-        else:
+        elif verdict["verdict"] == "invalid":
             await players.update_one({"server_id": server_id, "discord_id": actor_id}, {"$inc": {"fraudIndex": 5}, "$set": {"lastActive": now}})
             await message.reply("⚖️ **INVALID CLAIM**. Fraud Index increased.")
+        else:
+            # Safe failure state
+            await message.reply("⚖️ **SYSTEM ERROR**. The AI referee tripped over the cables. No stats changed. Try again later.")
         
         await events.insert_one({"server_id": server_id, "actor": actor_id, "target": target_id, "createdAt": now})
 
