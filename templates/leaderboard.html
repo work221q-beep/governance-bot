@@ -1,44 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <title>Sylas | Security Audit</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>body { background-color: #09090b; color: #f4f4f5; font-family: 'Inter', sans-serif; }</style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; background-color: #0f1115; color: #f4f4f5; }</style>
 </head>
-<body class="p-10">
-    <div class="max-w-6xl mx-auto">
-        <h1 class="text-4xl font-bold mb-2 text-center uppercase tracking-widest">Sylas <span class="text-red-600">Chaos Engine</span></h1>
-        <p class="text-center text-zinc-500 mb-10">Security Operations Center & Audit Logs</p>
+<body class="flex h-screen overflow-hidden">
 
-        <div class="bg-zinc-900 p-8 rounded-lg border border-zinc-800 mb-10 text-center">
-            <h2 class="text-2xl font-bold text-zinc-400 uppercase">Server Security Score</h2>
-            <div class="text-6xl font-black mt-4 {% if score >= 80 %}text-emerald-500{% elif score >= 50 %}text-yellow-500{% else %}text-red-600{% endif %}">
-                {{ score }}%
-            </div>
-            <p class="text-sm text-zinc-500 mt-2">Based on the latest automated penetration tests.</p>
+    <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
+        <div class="p-6 border-b border-zinc-800">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-red-600">.AI</span></h1>
+            <p class="text-xs text-zinc-500 mt-1">Chaos Engine v2.0</p>
         </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="/server/{{ guild_id }}" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition">⚙️ General Settings</a>
+            <a href="#" class="block px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20">🛡️ Security Audit Logs</a>
+            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition mt-8">← Switch Server</a>
+        </nav>
+    </aside>
 
-        <div class="bg-zinc-900 p-6 rounded-lg border border-zinc-800">
-            <h2 class="font-bold mb-6 uppercase text-zinc-400 border-b border-zinc-800 pb-2">Recent Security Probes</h2>
+    <main class="flex-1 overflow-y-auto p-10 bg-[#0f1115]">
+        <div class="max-w-4xl mx-auto">
             
-            {% if logs %}
-                <div class="space-y-4">
-                {% for log in logs %}
-                    <div class="flex justify-between items-center bg-zinc-950 p-4 rounded border {% if log.status == 'PASS' %}border-emerald-900/50{% else %}border-red-900/50{% endif %}">
-                        <div>
-                            <span class="font-bold text-sm tracking-wide {{ 'text-emerald-500' if log.status == 'PASS' else 'text-red-500' }}">
-                                [{{ log.status }}]
-                            </span>
-                            <span class="ml-2 font-mono text-zinc-300">{{ log.probe_type }}</span>
-                            <p class="text-xs text-zinc-500 mt-1">{{ log.details }}</p>
-                        </div>
-                        <span class="text-xs text-zinc-600 font-mono">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
-                    </div>
-                {% endfor %}
+            <header class="mb-10">
+                <h2 class="text-3xl font-bold text-white mb-2">Security Operations Center</h2>
+                <p class="text-zinc-400">Review recent automated penetration tests and vulnerabilities.</p>
+            </header>
+
+            <div class="bg-[#181a20] p-8 rounded-xl border border-zinc-800 mb-10 flex items-center justify-between shadow-lg">
+                <div>
+                    <h2 class="text-xl font-bold text-zinc-300 uppercase">Server Defense Score</h2>
+                    <p class="text-sm text-zinc-500 mt-1">Based on {{ logs|length }} recent automated tests.</p>
                 </div>
-            {% else %}
-                <p class="text-zinc-600 italic text-center py-10">No security tests run yet. Run !startraid in Discord to populate logs.</p>
-            {% endif %}
+                <div class="text-6xl font-black {% if score >= 80 %}text-emerald-500{% elif score >= 50 %}text-yellow-500{% else %}text-red-600{% endif %}">
+                    {{ score }}%
+                </div>
+            </div>
+
+            <div class="bg-[#181a20] p-6 rounded-xl border border-zinc-800 shadow-lg">
+                <h3 class="font-bold mb-6 uppercase text-zinc-400 border-b border-zinc-800 pb-2">Recent Probes</h3>
+                
+                {% if logs %}
+                    <div class="space-y-3">
+                    {% for log in logs %}
+                        <div class="flex justify-between items-center bg-[#0f1115] p-4 rounded-lg border {% if log.status == 'PASS' %}border-emerald-900/30{% else %}border-red-900/30{% endif %}">
+                            <div>
+                                <span class="font-bold text-sm tracking-wide {{ 'text-emerald-500' if log.status == 'PASS' else 'text-red-500' }}">
+                                    [{{ log.status }}]
+                                </span>
+                                <span class="ml-2 font-mono text-white">{{ log.probe_type }}</span>
+                                <p class="text-sm text-zinc-400 mt-1">{{ log.details }}</p>
+                            </div>
+                            <span class="text-xs text-zinc-600 font-mono">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-zinc-600 italic text-center py-10">Logs are clear. Run !startraid in your Discord server to initiate a test.</p>
+                {% endif %}
+            </div>
+
         </div>
-    </div>
+    </main>
+
 </body>
 </html>
