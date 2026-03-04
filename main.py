@@ -29,6 +29,12 @@ async def home(request: Request):
         except: user = None
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
 
+@app.get("/invite")
+async def invite_bot():
+    """Route to add the bot to a new server, just like MEE6."""
+    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
+    return RedirectResponse(url)
+
 @app.get("/login")
 async def login():
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={DISCORD_REDIRECT_URI}&scope=identify%20guilds"
@@ -82,7 +88,9 @@ async def update_server(request: Request, guild_id: str, prefix: str = Form(...)
 
 @app.get("/server/{guild_id}/audit")
 async def server_audit(request: Request, guild_id: str):
-    """Replaces the old leaderboard with a security audit log."""
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    
     logs = await audit_logs.find({"server_id": guild_id}).sort("timestamp", -1).limit(50).to_list(50)
     
     total_tests = len(logs)
