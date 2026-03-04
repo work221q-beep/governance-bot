@@ -9,6 +9,7 @@ db = client.sylas_chaos
 
 audit_logs = db.audit_logs
 mod_scores = db.mod_scores
+server_configs = db.server_configs # <-- This was missing!
 
 async def init_indexes():
     # Auto-delete test logs after 7 days (saves your 512MB Mongo limit)
