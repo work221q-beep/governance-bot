@@ -19,12 +19,11 @@ async def start_raid(ctx, wave_size: int = 3):
     guild = ctx.guild
     config = await server_configs.find_one({"server_id": str(guild.id)}) or {"model": "llama3"}
     
-    status_msg = await ctx.send("🔍 **INITIATING SERVER SECURITY AUDIT...** (Testing 7 Vulnerability Vectors)")
+    status_msg = await ctx.send("🔍 **INITIATING SERVER SECURITY AUDIT...** (Testing Vulnerability Vectors)")
     
-    # Track artifacts for Zero-Footprint cleanup
+    # Track artifacts for Zero-Footprint auto-cleanup
     artifacts = []
 
-    # VECTORS 1-5 (Condensed for brevity, same logic but appending to artifacts)
     try:
         c = await guild.create_text_channel("sylas-audit-fail")
         artifacts.append(c)
@@ -43,7 +42,6 @@ async def start_raid(ctx, wave_size: int = 3):
         await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Spawned webhook.")
     except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Webhook Exploitation", False, "Blocked.")
 
-    # VECTOR 7: MODERATOR REACTION TEST
     await status_msg.edit(content="✅ **STRUCTURAL AUDIT COMPLETE.** \n⏳ *Spawning active AI Phishing Raid...*")
     await asyncio.sleep(2) 
     
@@ -67,8 +65,8 @@ async def start_raid(ctx, wave_size: int = 3):
     except discord.Forbidden:
         await upsert_vulnerability(str(guild.id), "Automod Defense", False, "Blocked from sending webhooks.")
 
-    # ZERO FOOTPRINT CLEANUP & SUMMARY
-    await asyncio.sleep(15) # Wait 15s for TTK measurement before wiping everything
+    # ZERO FOOTPRINT CLEANUP & SUMMARY (Waits 15 seconds to allow Mods/Automod to react, then deletes everything)
+    await asyncio.sleep(15) 
     
     for entity in artifacts:
         try: await entity.delete()
@@ -80,14 +78,12 @@ async def start_raid(ctx, wave_size: int = 3):
             if msg.id in active_raid_messages: del active_raid_messages[msg.id]
         except: pass
 
-    # Auto-deleting summary
-    summary = (
-        "📊 **SYLAS AUDIT SUMMARY**\n"
-        "All structural penetration vectors tested. Active raid artifacts have been wiped from the server to maintain zero footprint.\n"
-        "Check your web dashboard for the updated Vulnerability Map and TTK scores.\n"
-        "*This message will self-destruct in 60 seconds.*"
+    summary_embed = discord.Embed(
+        title="📊 SYLAS AUDIT SUMMARY", 
+        description="All structural penetration vectors tested. Active raid artifacts have been wiped from the server to maintain a zero footprint.\n\nCheck your web dashboard for the updated Vulnerability Map and TTK scores.\n\n*This message will self-destruct in 60 seconds.*",
+        color=discord.Color.red()
     )
-    await ctx.send(summary, delete_after=60.0)
+    await ctx.send(embed=summary_embed, delete_after=60.0)
     try: await status_msg.delete()
     except: pass
 
@@ -110,7 +106,8 @@ async def scan_perms(ctx):
         allowed = baseline_map.get(str(role.id), [])
         role_perms = dict(role.permissions)
         
-        leaked_perms = [p for p in dangerous_flags if role_perms.get(p) and p not recalled in allowed]
+        # CORRECTED SYNTAX: checks if the dangerous permission exists and is NOT in the allowed list
+        leaked_perms = [p for p in dangerous_flags if role_perms.get(p) and p not in allowed]
         
         if leaked_perms:
             violations.append({"role": role, "leaks": leaked_perms})
