@@ -5,12 +5,28 @@ from ai import get_preloaded_payloads
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-# Global engine state controlled by Web Admin Panel
 engine_state = {"active": True}
-
-# State tracking dictionaries
 active_wargames = {}
-pending_dropdowns = {} # Tracks the setup menus so we know if a mod deletes them
+pending_dropdowns = {} 
+
+# Massive pool of normal-sounding chat messages
+INNOCENT_POOL = [
+    "Did anyone see the new patch notes? Looks sick.",
+    "I'm going to grab food, be back in 10 mins.",
+    "Can someone help me with the latest quest? I'm stuck.",
+    "Wow, the server is really active today.",
+    "Just got a new PC setup, finally hitting 144fps!",
+    "Anyone down for some ranked matches tonight?",
+    "That last game was insane...",
+    "Where do I submit my application for the clan?",
+    "Good morning everyone! Have a great day.",
+    "Is the voice channel lagging for anyone else?",
+    "I think Discord's API is acting up again.",
+    "Brb, my dog is barking at the mailman.",
+    "Does anyone know what time the event starts?",
+    "Finally finished my exams! Time to grind.",
+    "Who's streaming right now? I need something to watch."
+]
 
 class RaidSelect(discord.ui.Select):
     def __init__(self, original_cmd_msg):
@@ -22,30 +38,22 @@ class RaidSelect(discord.ui.Select):
         super().__init__(placeholder="Select a Wargame Protocol...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        # Remove from pending since the user successfully started the drill
         pending_dropdowns.pop(interaction.message.id, None)
-        
         await interaction.response.edit_message(view=None) 
-        # Pass both the dropdown message and the original user command so they can be deleted at the very end
         await execute_wargame(interaction, self.values[0], interaction.message, self.original_cmd_msg)
 
 class RaidView(discord.ui.View):
     def __init__(self, original_cmd_msg):
-        super().__init__(timeout=60.0) # 60 Second timeout for the dropdown menu
+        super().__init__(timeout=60.0) 
         self.original_cmd_msg = original_cmd_msg
-        self.message = None # Will be set after the message is sent
-        
-        # THIS IS WHAT WAS MISSING LAST TIME! Attaches the menu to the view.
+        self.message = None 
         self.add_item(RaidSelect(original_cmd_msg))
 
     async def on_timeout(self):
-        # If 60 seconds pass and nobody clicked the dropdown
         if self.message and self.message.id in pending_dropdowns:
             pending_dropdowns.pop(self.message.id, None)
             try: await self.message.delete()
             except: pass
-        
-        # Delete the original !startraid command
         try: await self.original_cmd_msg.delete()
         except: pass
 
@@ -63,8 +71,6 @@ async def start_raid(ctx):
         except: pass
         return
 
-    # Notice: We DO NOT delete ctx.message here anymore. It stays until the end.
-
     embed = discord.Embed(
         title="👻 SYLAS WARGAME ENGINE",
         description="**Select a Wargame to deploy.**\n\nDeployment drops 3 AI threats and 2 innocent messages. Mods have **60 seconds** to delete the threats. Deleting an innocent message results in immediate failure.",
@@ -74,8 +80,6 @@ async def start_raid(ctx):
     view = RaidView(ctx.message)
     dropdown_msg = await ctx.send(embed=embed, view=view)
     view.message = dropdown_msg
-    
-    # Track the dropdown message. If a mod deletes it early, we intercept it in on_message_delete.
     pending_dropdowns[dropdown_msg.id] = ctx.message
 
 async def execute_wargame(interaction: discord.Interaction, raid_type: str, dropdown_msg: discord.Message, original_cmd_msg: discord.Message):
@@ -85,28 +89,28 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     
     artifacts = []
     spawned_msgs = []
+    game_id = str(interaction.id)
     
     # 1. Fetch AI Scams
     scams = await get_preloaded_payloads(3, raid_type)
     for s in scams: s["is_malicious"] = True
         
-    # 2. Hardcode False Positives (Innocent chat to confuse mods)
+    # 2. Dynamic False Positives (Randomized Innocents)
+    sampled_innocents = random.sample(INNOCENT_POOL, 2)
     innocents = [
-        {"username": "GamerDude99", "spam_message": "Did anyone see the new patch notes? Looks sick.", "is_malicious": False},
-        {"username": "ChillVibes", "spam_message": "I'm going to grab food, be back in 10 mins.", "is_malicious": False}
+        {"username": f"User_{random.randint(100,999)}", "spam_message": sampled_innocents[0], "is_malicious": False},
+        {"username": f"Gamer_{random.randint(100,999)}", "spam_message": sampled_innocents[1], "is_malicious": False}
     ]
     
     # 3. Mix and shuffle the messages
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
     
-    game_id = str(interaction.id)
-    
     try:
-        webhook = await channel.create_webhook(name="User")
+        webhook = await channel.create_webhook(name="Sylas_Ghost")
         artifacts.append(webhook)
         
-        await status_msg.edit(embed=discord.Embed(title="⚔️ Wargame Deployed", description="Monitoring channel for 60 seconds...", color=discord.Color.red()))
+        await status_msg.edit(embed=discord.Embed(title="⚔️ Wargame Deployed", description="Monitoring channel for Mod Response...", color=discord.Color.red()))
         
         active_wargames[game_id] = {
             "status_msg_id": status_msg.id, "channel_id": channel.id, "start_time": discord.utils.utcnow(),
@@ -119,36 +123,44 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             active_wargames[game_id]["msg_map"][msg.id] = p["is_malicious"]
             await asyncio.sleep(0.5)
 
-        # 4. Wait the full 60 seconds to see if mods pass or fail
-        await asyncio.sleep(60) 
+        # 4. ACTIVE POLLING: Check the game state every second, exit instantly if won/failed
+        for _ in range(60):
+            wargame = active_wargames.get(game_id)
+            if not wargame or wargame["failed"] or wargame["scams_left"] <= 0:
+                break # Instantly end the timer!
+            await asyncio.sleep(1)
 
     finally:
-        # Check Final State
+        # Evaluate Final State
         wargame = active_wargames.get(game_id)
         if wargame:
             final_embed = discord.Embed(title="✅ WARGAME COMPLETE")
             if wargame["failed"]:
                 final_embed.title = "❌ WARGAME FAILED"
-                final_embed.description = "A moderator deleted an innocent message or failed to clear all threats in time."
+                final_embed.description = "A moderator deleted an innocent message. Structural integrity compromised."
                 final_embed.color = discord.Color.red()
             elif wargame["scams_left"] > 0:
                 final_embed.title = "❌ WARGAME FAILED (TIMEOUT)"
                 final_embed.description = f"Mods failed to delete {wargame['scams_left']} threats within 60 seconds."
                 final_embed.color = discord.Color.orange()
             else:
-                final_embed.description = "All threats neutralized successfully without casualties."
+                final_embed.description = "All threats neutralized successfully without casualties. Perfect execution."
                 final_embed.color = discord.Color.green()
 
             try: await status_msg.edit(embed=final_embed, delete_after=15.0)
             except: pass
             active_wargames.pop(game_id, None)
 
-        # Cleanup artifacts and spawned spam
-        cleanup_tasks = [entity.delete() for entity in artifacts if entity]
-        cleanup_tasks.extend([msg.delete() for msg in spawned_msgs if msg])
-        if cleanup_tasks: await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-        
-        # 5. THE FINAL CLEANUP: Delete the dropdown and the original !startraid command
+        # 5. STRICT CLEANUP ORDER
+        # MUST delete messages FIRST before deleting the Webhook, otherwise Discord rejects the deletion!
+        for msg in spawned_msgs:
+            try: await msg.delete()
+            except: pass
+            
+        for entity in artifacts:
+            try: await entity.delete()
+            except: pass
+            
         try: await dropdown_msg.delete()
         except: pass
         try: await original_cmd_msg.delete()
@@ -156,22 +168,16 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 
 @bot.event
 async def on_message_delete(message):
-    # ==========================================
-    # SCENARIO A: A Mod deletes the Dropdown Menu manually
-    # ==========================================
+    # Intercept Dropdown Cancellation
     if message.id in pending_dropdowns:
         original_cmd_msg = pending_dropdowns.pop(message.id)
         try:
-            # Send cancellation warning, auto-delete it after 5s
             await message.channel.send("🛑 **Wargame Cancelled.** Dropdown menu was deleted by a moderator.", delete_after=5.0)
-            # Delete the original !startraid command
             await original_cmd_msg.delete()
         except: pass
         return
 
-    # ==========================================
-    # SCENARIO B: A Mod deletes a Spam/Innocent Message during an active wargame
-    # ==========================================
+    # Intercept In-Game Message Deletions
     for game_id, wargame in list(active_wargames.items()):
         if message.id in wargame["msg_map"]:
             is_malicious = wargame["msg_map"][message.id]
@@ -183,10 +189,12 @@ async def on_message_delete(message):
                 embed = status_msg.embeds[0]
                 
                 if not is_malicious:
+                    # They deleted an innocent message!
                     wargame["failed"] = True
                     embed.color = discord.Color.red()
                     embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted an innocent message at **{time_alive:.1f}s**!", inline=False)
                 else:
+                    # They correctly deleted a scam!
                     wargame["scams_left"] -= 1
                     embed.add_field(name="🛡️ Threat Neutralized", value=f"Scam deleted in **{time_alive:.1f}s**.", inline=False)
                 
