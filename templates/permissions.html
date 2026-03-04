@@ -16,7 +16,6 @@
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
             if (tab) { switchTab(tab); }
-            
             const msg = urlParams.get('msg');
             if (msg) { showToast(decodeURIComponent(msg)); }
         }
@@ -43,7 +42,7 @@
 
         function copyText(text) {
             navigator.clipboard.writeText(text);
-            showToast("Copied to clipboard: " + text);
+            showToast("Copied ID to clipboard.");
         }
 
         function showToast(message) {
@@ -51,7 +50,6 @@
             toast.innerText = message;
             toast.classList.remove("hidden", "toast-exit");
             toast.classList.add("toast-enter");
-            
             setTimeout(() => {
                 toast.classList.remove("toast-enter");
                 toast.classList.add("toast-exit");
@@ -62,7 +60,6 @@
         function executeModAction(action, id, name, tab) {
             let readableAction = action === 'timeout' ? 'time out' : action;
             let reason = prompt(`Provide a reason to ${readableAction} ${name}:`, "Web Admin Action");
-            
             if (reason === null) return; 
             
             let form = document.createElement('form');
@@ -78,12 +75,71 @@
             document.body.appendChild(form);
             form.submit();
         }
+
+        // Opens the Discord-Style Channel Override Modal
+        function openChannelModal(channelId, channelName) {
+            document.getElementById('modal-channel-name').innerText = '#' + channelName;
+            document.getElementById('override-form').action = `/server/{{ guild_id }}/channel_override/${channelId}`;
+            document.getElementById('channel-modal').classList.remove('hidden');
+        }
+
+        function closeChannelModal() {
+            document.getElementById('channel-modal').classList.add('hidden');
+        }
     </script>
 </head>
 <body class="flex h-screen overflow-hidden relative">
 
-    <div id="toast-notification" class="hidden fixed bottom-10 right-10 z-50 bg-[#181a20] border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl font-semibold max-w-sm">
-        Notification text
+    <div id="toast-notification" class="hidden fixed bottom-10 right-10 z-50 bg-[#181a20] border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl font-semibold max-w-sm"></div>
+
+    <div id="channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-[#141519] border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            <div class="bg-[#181a20] px-6 py-4 border-b border-zinc-800 flex justify-between items-center">
+                <h3 class="text-xl font-bold text-white">Manage Channel Overrides</h3>
+                <button onclick="closeChannelModal()" class="text-zinc-500 hover:text-white font-bold text-xl">&times;</button>
+            </div>
+            
+            <form id="override-form" method="post" action="" class="p-6 space-y-6">
+                <div>
+                    <label class="block text-zinc-400 text-sm font-bold mb-2">Target Channel</label>
+                    <div id="modal-channel-name" class="w-full bg-[#0a0a0c] text-white p-3 rounded-lg border border-zinc-800 font-mono">#channel</div>
+                </div>
+
+                <div>
+                    <label class="block text-zinc-400 text-sm font-bold mb-2">Select Target Role</label>
+                    <select name="role_id" class="w-full bg-[#0a0a0c] text-white p-3 rounded-lg border border-zinc-800 focus:outline-none focus:border-red-500" required>
+                        <option value="" disabled selected>Select a role...</option>
+                        {% for r in roles %}
+                            <option value="{{ r.id }}">{{ r.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 border-t border-zinc-800 pt-6">
+                    <div>
+                        <label class="block text-zinc-400 text-xs font-bold mb-2 uppercase tracking-wide">View Channel</label>
+                        <select name="view_channel" class="w-full bg-zinc-900 text-white p-2.5 rounded-lg border border-zinc-700 focus:outline-none">
+                            <option value="inherit">Inherit (/)</option>
+                            <option value="allow">Allow (✓)</option>
+                            <option value="deny">Deny (X)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-zinc-400 text-xs font-bold mb-2 uppercase tracking-wide">Send Messages</label>
+                        <select name="send_messages" class="w-full bg-zinc-900 text-white p-2.5 rounded-lg border border-zinc-700 focus:outline-none">
+                            <option value="inherit">Inherit (/)</option>
+                            <option value="allow">Allow (✓)</option>
+                            <option value="deny">Deny (X)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t border-zinc-800">
+                    <button type="button" onclick="closeChannelModal()" class="px-5 py-2.5 rounded-lg font-bold text-zinc-400 hover:text-white transition">Cancel</button>
+                    <button type="submit" class="bg-red-600 hover:bg-red-500 text-white px-6 py-2.5 rounded-lg font-bold transition shadow-lg shadow-red-900/20">Sync Override</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
@@ -121,7 +177,7 @@
                     <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex justify-between items-center shadow-md hover:border-zinc-600 transition">
                         <div class="flex items-center gap-3">
                             <div class="w-4 h-4 rounded-full" style="background-color: {{ r.color }};"></div>
-                            <span class="font-bold text-white cursor-pointer hover:underline" onclick="copyText('{{ r.name }}')">{{ r.name }}</span>
+                            <span class="font-bold text-white cursor-pointer hover:underline" onclick="copyText('{{ r.id }}')">{{ r.name }}</span>
                         </div>
                         <a href="/server/{{ guild_id }}#role-{{ r.id }}" class="text-xs bg-zinc-800 hover:bg-red-600 text-white px-3 py-2 rounded transition">Edit Perms</a>
                     </div>
@@ -130,9 +186,6 @@
             </div>
 
             <div id="users" class="tab-content hidden">
-                <div class="bg-blue-900/10 border border-blue-900/50 p-4 rounded-xl mb-6 text-blue-400 text-sm">
-                    <strong>Note:</strong> Global permissions are inherited via <strong>Roles</strong>. Edit Roles to manage access. Use this panel for absolute moderation actions.
-                </div>
                 <input type="text" id="search-users" onkeyup="filterList('search-users', 'list-users')" placeholder="Search for a user..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none">
                 <div id="list-users" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% for u in users %}
@@ -140,7 +193,7 @@
                         <div class="flex items-center gap-4">
                             {% if u.avatar %}<img src="{{ u.avatar }}" class="w-12 h-12 rounded-full bg-zinc-800">{% else %}<div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-500">?</div>{% endif %}
                             <div>
-                                <span class="font-bold text-white block cursor-pointer hover:underline" onclick="copyText('{{ u.name }}')">{{ u.name }}</span>
+                                <span class="font-bold text-white block">{{ u.name }}</span>
                                 <span class="text-xs text-zinc-500 font-mono cursor-pointer hover:text-white" onclick="copyText('{{ u.id }}')">ID: {{ u.id }}</span>
                             </div>
                         </div>
@@ -162,7 +215,7 @@
                         <div class="flex items-center gap-4">
                             {% if b.avatar %}<img src="{{ b.avatar }}" class="w-12 h-12 rounded-lg bg-zinc-800">{% else %}<div class="w-12 h-12 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-500">🤖</div>{% endif %}
                             <div>
-                                <span class="font-bold text-white block cursor-pointer hover:underline" onclick="copyText('{{ b.name }}')">{{ b.name }}</span>
+                                <span class="font-bold text-white block">{{ b.name }}</span>
                                 <span class="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded uppercase font-bold text-[10px]">Integration</span>
                             </div>
                         </div>
@@ -177,14 +230,17 @@
 
             <div id="channels" class="tab-content hidden">
                 <input type="text" id="search-channels" onkeyup="filterList('search-channels', 'list-channels')" placeholder="Search for a channel..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none">
-                <div id="list-channels" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div id="list-channels" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% for c in channels %}
-                    <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex items-center gap-4 shadow-md hover:border-zinc-600 transition">
-                        <span class="text-2xl text-zinc-600">{% if 'voice' in c.type %}🔊{% elif 'category' in c.type %}📁{% else %}#️⃣{% endif %}</span>
-                        <div>
-                            <span class="font-bold text-white block cursor-pointer hover:underline" onclick="copyText('{{ c.name }}')">{{ c.name }}</span>
-                            <span class="text-xs text-zinc-500 font-mono cursor-pointer hover:text-white" onclick="copyText('{{ c.id }}')">ID: {{ c.id }}</span>
+                    <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex items-center justify-between gap-4 shadow-md hover:border-zinc-600 transition">
+                        <div class="flex items-center gap-4">
+                            <span class="text-2xl text-zinc-600">{% if 'voice' in c.type %}🔊{% elif 'category' in c.type %}📁{% else %}#️⃣{% endif %}</span>
+                            <div>
+                                <span class="font-bold text-white block">{{ c.name }}</span>
+                                <span class="text-xs text-zinc-500 font-mono cursor-pointer hover:text-white" onclick="copyText('{{ c.id }}')">ID: {{ c.id }}</span>
+                            </div>
                         </div>
+                        <button onclick="openChannelModal('{{ c.id }}', '{{ c.name|replace(\"'\", \"\\\\'\") }}')" class="bg-zinc-800 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition">Manage Overrides</button>
                     </div>
                     {% endfor %}
                 </div>
