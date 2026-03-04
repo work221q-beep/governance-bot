@@ -1,33 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Sylas | Select Server</title>
+    <title>Sylas | Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>body { font-family: 'Inter', sans-serif; background-color: #0f1115; color: #fff; }</style>
 </head>
-<body class="min-h-screen flex flex-col items-center py-20">
-
-    <div class="text-center mb-12">
-        <h1 class="text-4xl font-extrabold tracking-tight mb-2">Select a Server</h1>
-        <p class="text-zinc-400">Choose a server to configure the Sylas Chaos Engine.</p>
+<body class="min-h-screen py-20 px-6">
+    <div class="max-w-6xl mx-auto text-center mb-16">
+        <h1 class="text-5xl font-black tracking-tight mb-4">Your Infrastructure</h1>
+        <p class="text-zinc-400 text-lg italic">Select a target guild to initialize the chaos cycle.</p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl w-full px-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
         {% for guild in user.guilds %}
-        <a href="/server/{{ guild.id }}" class="group block bg-[#181a20] border border-zinc-800 rounded-xl p-6 hover:border-red-500/50 hover:bg-[#1c1e26] transition-all duration-200">
-            <div class="flex items-center space-x-4">
-                <div class="h-16 w-16 bg-zinc-800 rounded-full flex items-center justify-center text-xl font-bold text-zinc-400 group-hover:text-red-500 transition-colors">
+        <a href="/server/{{ guild.id }}" class="group block bg-[#181a20] border border-zinc-800 rounded-2xl p-8 hover:border-red-600 transition-all duration-300">
+            <div class="flex items-center space-x-6">
+                <div class="h-16 w-16 bg-zinc-800 rounded-full flex items-center justify-center text-2xl font-bold group-hover:text-red-500 transition-colors">
                     {{ guild.name[0] }}
                 </div>
                 <div>
-                    <h2 class="text-xl font-bold text-gray-100 group-hover:text-white">{{ guild.name }}</h2>
-                    <p class="text-sm text-zinc-500 mt-1">Configure Engine →</p>
+                    <h2 class="text-xl font-bold">{{ guild.name }}</h2>
+                    <p class="text-sm text-zinc-500 mt-1 uppercase tracking-widest">Access Panel →</p>
                 </div>
             </div>
         </a>
         {% endfor %}
     </div>
-
 </body>
 </html>
