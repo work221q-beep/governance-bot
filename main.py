@@ -38,6 +38,14 @@ async def login():
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={DISCORD_REDIRECT_URI}&scope=identify%20guilds"
     return RedirectResponse(url)
 
+@app.get("/logout")
+async def logout():
+    """Destroys the session and logs the user out."""
+    response = RedirectResponse(url="/")
+    response.delete_cookie("session")
+    response.delete_cookie("admin_auth")
+    return response
+
 @app.get("/invite")
 async def invite_bot():
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
@@ -55,8 +63,14 @@ async def callback(code: str):
         guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
 
     manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
+    
+    # Fetch Avatar for Dashboard UI
+    avatar_url = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png" if user.get("avatar") else None
+    
     response = RedirectResponse(url="/dashboard")
-    response.set_cookie("session", serializer.dumps({"id": user["id"], "username": user["username"], "guilds": manageable_guilds}), httponly=True)
+    response.set_cookie("session", serializer.dumps({
+        "id": user["id"], "username": user["username"], "avatar": avatar_url, "guilds": manageable_guilds
+    }), httponly=True)
     return response
 
 @app.get("/dashboard")
@@ -84,7 +98,6 @@ async def admin_panel(request: Request, key: str = None):
 
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     
-    # SUDO DB FETCH: Dynamically pull every collection and format datetimes safely
     db = payload_armory.database
     collection_names = await db.list_collection_names()
     
@@ -232,3 +245,46 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         else: msg = "❌ User not found in server."
     safe_msg = urllib.parse.quote(msg)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&msg={safe_msg}", status_code=303)
+
+# NEW: Channel Permissions Override Endpoint
+@app.post("/server/{guild_id}/channel_override/{channel_id}")
+async def channel_override(request: Request, guild_id: str, channel_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    session_user = serializer.loads(user_cookie)
+    
+    form_data = await request.form()
+    target_role_id = form_data.get("role_id")
+    view_perm = form_data.get("view_channel")
+    send_perm = form_data.get("send_messages")
+    
+    msg = "❌ Failed to update channel."
+    guild = bot.get_guild(int(guild_id))
+    if guild:
+        channel = guild.get_channel(int(channel_id))
+        role = guild.get_role(int(target_role_id))
+        
+        if channel and role:
+            # Check Bot Hierarchy (Can't edit higher roles)
+            if guild.me.top_role <= role and not role.is_everyone:
+                msg = f"❌ Blocked: Bot role is lower than {role.name}."
+            else:
+                overwrite = channel.overwrites_for(role)
+                
+                # Assign values (True = Allow, False = Deny, None = Inherit)
+                if view_perm == "allow": overwrite.view_channel = True
+                elif view_perm == "deny": overwrite.view_channel = False
+                else: overwrite.view_channel = None
+                
+                if send_perm == "allow": overwrite.send_messages = True
+                elif send_perm == "deny": overwrite.send_messages = False
+                else: overwrite.send_messages = None
+                
+                try:
+                    await channel.set_permissions(role, overwrite=overwrite, reason=f"Web Sync by {session_user.get('username')}")
+                    msg = f"✅ Successfully updated overrides for {role.name} in #{channel.name}."
+                except discord.Forbidden:
+                    msg = "❌ Blocked: Missing Discord permissions to manage channels."
+
+    safe_msg = urllib.parse.quote(msg)
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&msg={safe_msg}", status_code=303)
