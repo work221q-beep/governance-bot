@@ -9,15 +9,15 @@ db = client.sylas_chaos
 
 server_configs = db.server_configs
 vuln_state = db.vulnerability_state 
+payload_armory = db.payload_armory # NEW: The Harvester Storage
 
 async def init_indexes():
     await vuln_state.create_index([("server_id", 1), ("vuln_name", 1)], unique=True)
     await server_configs.create_index("server_id", unique=True)
+    await payload_armory.create_index("raid_type")
 
 async def upsert_vulnerability(server_id: str, vuln_name: str, is_vulnerable: bool, details: str):
-    """Updates the CURRENT state, but preserves the previous state for the Web UI Audit Delta."""
     status = "VULNERABLE" if is_vulnerable else "SECURE"
-    
     existing = await vuln_state.find_one({"server_id": server_id, "vuln_name": vuln_name})
     prev_status = existing.get("status", "UNKNOWN") if existing else "UNKNOWN"
 
