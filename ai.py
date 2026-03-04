@@ -9,7 +9,7 @@ async def harvest_payloads(raid_type: str = "phishing"):
     current_count = await payload_armory.count_documents({"raid_type": raid_type})
     if current_count >= MAX_PAYLOADS: return 0
 
-    prompt = f"Generate a JSON array of 3 realistic Discord {raid_type} scam messages. Output strictly a valid JSON array of objects with keys 'username' and 'spam_message'. No markdown, no extra text, just JSON."
+    prompt = f"Generate a JSON array of 3 realistic Discord {raid_type} scam messages. Output strictly a valid JSON array of objects with keys 'username' and 'spam_message'. No markdown, no extra text."
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -50,7 +50,7 @@ async def harvest_payloads(raid_type: str = "phishing"):
                         
                     return len(inserts)
     except Exception as e:
-        print(f"🚨 AI Error: {e}")
+        print(f"🚨 AI Timeout/Error: {e}")
     return 0
 
 async def harvest_loop():
@@ -71,6 +71,6 @@ async def get_preloaded_payloads(intensity: int, raid_type: str = "phishing"):
     payloads = await cursor.to_list(length=intensity)
     
     if len(payloads) < intensity:
-        if raid_type == "ping": return [{"username": "System", "spam_message": "🚨 @everyone CRITICAL ALERT: Verify your account! https://fake-verify.com"}] * intensity
-        return [{"username": "Ghost", "spam_message": "Free Nitro Drop: https://fake-nitro.com"}] * intensity
+        if raid_type == "ping": return [{"username": "System", "spam_message": "🚨 @everyone CRITICAL ALERT: Verify your account! https://fake-verify.com", "_id": None}] * intensity
+        return [{"username": "Ghost", "spam_message": "Free Nitro Drop: https://fake-nitro.com", "_id": None}] * intensity
     return payloads
