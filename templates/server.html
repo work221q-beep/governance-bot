@@ -1,36 +1,90 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>{{ config.server_id }} Settings</title>
+    <title>Sylas Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>body { background-color: #09090b; color: #f4f4f5; }</style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f1115; color: #f4f4f5; }
+        /* Custom Toggle Switch */
+        .toggle-checkbox:checked { right: 0; border-color: #ef4444; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #ef4444; }
+    </style>
 </head>
-<body class="p-10 max-w-2xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Sylas Engine: Server Configuration</h1>
+<body class="flex h-screen overflow-hidden">
 
-    <form method="post" action="/server/{{ guild_id }}/update" class="bg-zinc-900 p-6 rounded-lg border border-zinc-800 space-y-4">
-        
-        <div>
-            <label class="block text-sm font-bold text-zinc-400 mb-1">Bot Command Prefix:</label>
-            <input type="text" name="prefix" value="{{ config.prefix | default('!') }}" class="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-white">
+    <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
+        <div class="p-6 border-b border-zinc-800">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-red-600">.AI</span></h1>
+            <p class="text-xs text-zinc-500 mt-1">Chaos Engine v2.0</p>
         </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="#" class="block px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20">⚙️ General Settings</a>
+            <a href="/server/{{ guild_id }}/audit" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition">🛡️ Security Audit Logs</a>
+            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition mt-8">← Switch Server</a>
+        </nav>
+    </aside>
 
-        <div>
-            <label class="block text-sm font-bold text-zinc-400 mb-1">AI Infiltration Model:</label>
-            <select name="model" class="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-white">
-                {% for m in models %}
-                    <option value="{{ m }}" {% if m == config.model %}selected{% endif %}>{{ m }}</option>
-                {% endfor %}
-            </select>
-            <p class="text-xs text-zinc-500 mt-1">Llama 3 is recommended for generating complex payload bypasses.</p>
+    <main class="flex-1 overflow-y-auto p-10 bg-[#0f1115]">
+        <div class="max-w-4xl mx-auto">
+            
+            <header class="mb-10 flex justify-between items-end">
+                <div>
+                    <h2 class="text-3xl font-bold text-white mb-2">General Settings</h2>
+                    <p class="text-zinc-400">Configure how Sylas behaves and attacks this server.</p>
+                </div>
+            </header>
+
+            <form method="post" action="/server/{{ guild_id }}/update" class="space-y-8">
+                
+                <section class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg">
+                    <h3 class="text-lg font-bold text-white mb-4 border-b border-zinc-800 pb-2">Core Configuration</h3>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-semibold text-zinc-400 mb-2">Command Prefix</label>
+                            <input type="text" name="prefix" value="{{ config.prefix | default('!') }}" 
+                                class="w-full bg-[#0f1115] border border-zinc-700 rounded-lg p-3 text-white focus:outline-none focus:border-red-500 transition">
+                            <p class="text-xs text-zinc-500 mt-2">The prefix used to trigger commands like `!startraid`.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-zinc-400 mb-2">AI Payload Model</label>
+                            <select name="model" class="w-full bg-[#0f1115] border border-zinc-700 rounded-lg p-3 text-white focus:outline-none focus:border-red-500 transition appearance-none">
+                                {% for m in models %}
+                                    <option value="{{ m }}" {% if m == config.model %}selected{% endif %}>{{ m }}</option>
+                                {% endfor %}
+                            </select>
+                            <p class="text-xs text-zinc-500 mt-2">Llama 3 is recommended for filter bypass tests.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg">
+                    <h3 class="text-lg font-bold text-white mb-4 border-b border-zinc-800 pb-2">Red Team Behaviors</h3>
+                    
+                    <div class="flex items-center justify-between p-4 bg-[#0f1115] rounded-lg border border-zinc-800">
+                        <div>
+                            <h4 class="font-bold text-white">Enable Webhook Infiltration</h4>
+                            <p class="text-sm text-zinc-500">Allow Sylas to spawn phantom users for spam testing.</p>
+                        </div>
+                        <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="webhooks_enabled" id="toggle1" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 z-10" checked/>
+                            <label for="toggle1" class="toggle-label block overflow-hidden h-6 rounded-full bg-zinc-600 cursor-pointer transition-colors duration-300"></label>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg flex justify-between items-center">
+                    <p class="text-sm text-zinc-400">Unsaved changes will be lost if you leave this page.</p>
+                    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg transition-colors shadow-lg shadow-red-900/20">
+                        Save Changes
+                    </button>
+                </div>
+
+            </form>
         </div>
+    </main>
 
-        <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded w-full transition">Save Target Settings</button>
-    </form>
-
-    <div class="mt-6 flex justify-between">
-        <a href="/dashboard" class="text-zinc-500 hover:text-white transition">← Back to Dashboard</a>
-        <a href="/server/{{ guild_id }}/audit" class="text-emerald-500 hover:text-emerald-400 font-bold transition">View Security Audit Log →</a>
-    </div>
 </body>
 </html>
