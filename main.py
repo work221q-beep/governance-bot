@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 from datetime import datetime
 from bot import start_bot
-from db import init_indexes, players, configs, get_server_config
+from db import init_indexes, server_configs, audit_logs
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -15,23 +15,10 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 
-async def decay_cycle():
-    while True:
-        try:
-            now = datetime.utcnow()
-            async for player in players.find({}):
-                last_decay = player.get("lastDecay", now)
-                if (now - last_decay).total_seconds() / 3600 >= 24:
-                    new_fraud = max(0, player.get("fraudIndex", 0) - 5)
-                    await players.update_one({"_id": player["_id"]}, {"$set": {"fraudIndex": new_fraud, "lastDecay": now}})
-        except Exception as e: print(f"Decay error: {e}")
-        await asyncio.sleep(3600)
-
 @app.on_event("startup")
 async def startup_event():
     await init_indexes()
     asyncio.create_task(start_bot())
-    asyncio.create_task(decay_cycle())
 
 @app.get("/")
 async def home(request: Request):
@@ -54,8 +41,7 @@ async def callback(code: str):
             "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI
         })
-        token_data = token_res.json()
-        access_token = token_data.get("access_token")
+        access_token = token_res.json().get("access_token")
         user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
         guild_res = await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})
         user, guilds = user_res.json(), guild_res.json()
@@ -82,19 +68,27 @@ async def server_panel(request: Request, guild_id: str):
     except: return RedirectResponse("/")
     allowed = any(g["id"] == guild_id for g in user["guilds"])
     if not allowed: return HTMLResponse("Access Denied", status_code=403)
-    config = await get_server_config(guild_id)
+    
+    config = await server_configs.find_one({"server_id": guild_id}) or {"model": "llama3"}
     models = ["phi3:mini", "llama3", "mistral"] 
     return templates.TemplateResponse("server.html", {"request": request, "guild_id": guild_id, "config": config, "models": models})
 
 @app.post("/server/{guild_id}/update")
-async def update_server(request: Request, guild_id: str, prefix: str = Form(...), model: str = Form(...), ai_enabled: str = Form(None)):
+async def update_server(request: Request, guild_id: str, prefix: str = Form(...), model: str = Form(...)):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    await configs.update_one({"server_id": guild_id}, {"$set": {"prefix": prefix, "model": model, "ai_enabled": bool(ai_enabled)}})
+    await server_configs.update_one({"server_id": guild_id}, {"$set": {"prefix": prefix, "model": model}}, upsert=True)
     return RedirectResponse(f"/server/{guild_id}", status_code=303)
 
-@app.get("/server/{guild_id}/leaderboard")
-async def server_leaderboard(request: Request, guild_id: str):
-    top_cred = await players.find({"server_id": guild_id}).sort("credibility", -1).limit(10).to_list(10)
-    top_fraud = await players.find({"server_id": guild_id}).sort("fraudIndex", -1).limit(10).to_list(10)
-    return templates.TemplateResponse("leaderboard.html", {"request": request, "guild_id": guild_id, "top_cred": top_cred, "top_fraud": top_fraud})
+@app.get("/server/{guild_id}/audit")
+async def server_audit(request: Request, guild_id: str):
+    """Replaces the old leaderboard with a security audit log."""
+    logs = await audit_logs.find({"server_id": guild_id}).sort("timestamp", -1).limit(50).to_list(50)
+    
+    total_tests = len(logs)
+    passed_tests = sum(1 for log in logs if log["status"] == "PASS")
+    security_score = int((passed_tests / total_tests) * 100) if total_tests > 0 else 100
+
+    return templates.TemplateResponse("leaderboard.html", {
+        "request": request, "guild_id": guild_id, "logs": logs, "score": security_score
+    })
