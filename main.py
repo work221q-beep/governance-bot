@@ -8,7 +8,7 @@ import urllib.parse
 
 from bot import start_bot, bot, engine_state 
 from ai import harvest_loop, harvest_payloads
-from db import init_indexes, payload_armory
+from db import init_indexes, payload_armory, vuln_state, server_configs
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -19,6 +19,9 @@ DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123") 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+# YOUR DISCORD ID GOES HERE (or in Render Env Vars)
+MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID", "YOUR_DISCORD_ID_HERE") 
 
 @app.on_event("startup")
 async def startup_event():
@@ -39,7 +42,6 @@ async def login():
 
 @app.get("/invite")
 async def invite_bot():
-    # STRICTLY ENFORCES ADMINISTRATOR (8) ON INVITE
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
     return RedirectResponse(url)
 
@@ -63,7 +65,12 @@ async def callback(code: str):
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": serializer.loads(user_cookie)})
+    
+    session_user = serializer.loads(user_cookie)
+    # 🛑 FAILSAFE 1: Verify if the logged-in user is the Master Admin
+    is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
+    
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
 
 # ==========================================
 # 🛑 MASTER ADMIN PANEL (PROTECTED)
@@ -75,7 +82,7 @@ async def admin_panel(request: Request, key: str = None):
         response = RedirectResponse("/admin")
         response.set_cookie("admin_auth", "true", httponly=True)
         return response
-    if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
+    if admin_auth != "true": return HTMLResponse("Unauthorized - Invalid Key", status_code=403)
 
     ollama_status = "OFFLINE"
     try:
@@ -85,7 +92,15 @@ async def admin_panel(request: Request, key: str = None):
     except: pass
 
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
-    return templates.TemplateResponse("admin.html", {"request": request, "payloads": payloads, "bot_active": engine_state["active"], "ollama_status": ollama_status})
+    
+    # Fetch DB Stats for the Database Manager Tab
+    vuln_count = await vuln_state.count_documents({})
+    server_count = await server_configs.count_documents({})
+    
+    return templates.TemplateResponse("admin.html", {
+        "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
+        "ollama_status": ollama_status, "vuln_count": vuln_count, "server_count": server_count
+    })
 
 @app.post("/admin/toggle_bot")
 async def toggle_bot(request: Request):
@@ -104,7 +119,14 @@ async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
 async def admin_delete_payload(request: Request, payload_id: str):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     await payload_armory.delete_one({"_id": ObjectId(payload_id)})
-    return RedirectResponse("/admin", status_code=303)
+    return RedirectResponse("/admin?tab=armory", status_code=303)
+
+@app.post("/admin/purge_armory")
+async def admin_purge_armory(request: Request):
+    """Nukes the entire payload armory."""
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    await payload_armory.delete_many({})
+    return RedirectResponse("/admin?tab=armory", status_code=303)
 
 # ==========================================
 # 🛡️ LIVE SYNC & PERMISSION MANAGER
@@ -125,23 +147,17 @@ async def server_panel(request: Request, guild_id: str):
 async def sync_server_permissions(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    
     session_user = serializer.loads(user_cookie)
     web_username = session_user.get("username")
-    
     form_data = await request.form()
     guild = bot.get_guild(int(guild_id))
-    
     if guild:
         for r in guild.roles:
             selected_perms = form_data.getlist(f"perms_{r.id}")
             all_discord_perms = [p[0] for p in discord.Permissions()]
             new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
-            try: 
-                # Bot uses its absolute power to execute the change
-                await r.edit(permissions=discord.Permissions(**new_kwargs), reason=f"Sylas Web Sync (By {web_username})")
+            try: await r.edit(permissions=discord.Permissions(**new_kwargs), reason=f"Sylas Web Sync (By {web_username})")
             except discord.Forbidden: pass
-
     return RedirectResponse(f"/server/{guild_id}", status_code=303)
 
 @app.get("/server/{guild_id}/permissions")
@@ -150,7 +166,6 @@ async def permissions_manager(request: Request, guild_id: str):
     if not user_cookie: return RedirectResponse("/")
     guild = bot.get_guild(int(guild_id))
     roles, users, bots, channels = [], [], [], []
-    
     if guild:
         roles = [{"id": str(r.id), "name": r.name, "color": str(r.color) if r.color.value != 0 else None} for r in reversed(guild.roles)]
         for m in guild.members[:500]:
@@ -159,29 +174,22 @@ async def permissions_manager(request: Request, guild_id: str):
             else: users.append(member_data)
         for c in guild.channels:
             channels.append({"id": str(c.id), "name": c.name, "type": str(c.type)})
-            
     return templates.TemplateResponse("permissions.html", {"request": request, "guild_id": guild_id, "roles": roles, "users": users, "bots": bots, "channels": channels, "guild_name": guild.name if guild else "Unknown"})
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str, tab: str = "users"):
-    """Executes absolute moderation commands, prompts for reasons, and returns visual toast feedback."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    
     session_user = serializer.loads(user_cookie)
     web_username = session_user.get("username")
-    
     form_data = await request.form()
     reason = form_data.get("reason", "No reason provided")
     full_reason = f"{reason} (via Web Admin: {web_username})"
-    
     guild = bot.get_guild(int(guild_id))
     msg = "❌ Action failed: Guild not found."
-    
     if guild:
         target = guild.get_member(int(target_id))
         if target:
-            # Check if Discord physical limits block the bot
             if guild.me.top_role <= target.top_role:
                 msg = f"❌ Action blocked: The Sylas Bot role is lower than {target.name}'s role. Move my role higher!"
             else:
@@ -195,13 +203,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
                     elif action == "timeout": 
                         await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=full_reason)
                         msg = f"✅ Timed out {target.name} for 10 minutes. Reason: {reason}"
-                except discord.Forbidden:
-                    msg = "❌ Action blocked: I lack Discord permissions."
-                except Exception as e:
-                    msg = f"❌ Internal Error: {str(e)}"
-        else:
-            msg = "❌ User not found in server."
-
+                except discord.Forbidden: msg = "❌ Action blocked: I lack Discord permissions."
+                except Exception as e: msg = f"❌ Internal Error: {str(e)}"
+        else: msg = "❌ User not found in server."
     safe_msg = urllib.parse.quote(msg)
-    # Redirects back to the EXACT tab you were on, carrying the success message
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&msg={safe_msg}", status_code=303)
