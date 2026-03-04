@@ -7,43 +7,13 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 active_raid_messages = {}
 
-class RemediationView(discord.ui.View):
-    def __init__(self, guild):
-        super().__init__(timeout=300)
-        self.guild = guild
-
-    @discord.ui.button(label="Auto-Fix Vulnerabilities", style=discord.ButtonStyle.green, emoji="🛡️")
-    async def fix_vulns(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⚙️ **Executing Auto-Remediation...**", ephemeral=True)
-        fixed_count = 0
-        
-        # 1. Strip dangerous perms from @everyone instantly
-        try:
-            default_role = self.guild.default_role
-            perms = default_role.permissions
-            perms.update(mention_everyone=False, manage_webhooks=False, administrator=False, create_instant_invite=False)
-            await default_role.edit(permissions=perms, reason="Sylas Enterprise: Auto-Remediation")
-            fixed_count += 1
-        except Exception as e: print(e)
-
-        # 2. Scrub any rogue webhooks left in the server
-        try:
-            for w in await self.guild.webhooks():
-                if w.name != "Sylas_Scanner": 
-                    await w.delete(reason="Sylas Auto-Remediation")
-                    fixed_count += 1
-        except: pass
-
-        await interaction.edit_original_response(content=f"✅ **Remediation Complete:** Stripped dangerous permissions from @everyone and deleted rogue webhooks. ({fixed_count} actions taken).")
-        self.stop()
-
 class RaidSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Phishing & Scam Flood", description="Deploys AI malicious links.", emoji="🎣", value="phishing"),
-            discord.SelectOption(label="Structural Nuke", description="Mass-creates unauthorized roles/channels.", emoji="💥", value="nuke"),
-            discord.SelectOption(label="Mass Ping Raid", description="Tests @everyone vulnerability.", emoji="🔔", value="ping"),
-            discord.SelectOption(label="Full Chaos Engine", description="Deploy the entire arsenal.", emoji="🔥", value="all")
+            discord.SelectOption(label="Phishing & Scam Flood", description="Tests Automod via AI-generated malicious links.", emoji="🎣", value="phishing"),
+            discord.SelectOption(label="Structural Nuke", description="Tests unauthorized role/channel/webhook creation.", emoji="💥", value="nuke"),
+            discord.SelectOption(label="Verification Gate Audit", description="Scans @everyone restrictions and channel overrides.", emoji="🛡️", value="gate"),
+            discord.SelectOption(label="Full Chaos Engine", description="Deploy the entire testing suite.", emoji="🔥", value="all")
         ]
         super().__init__(placeholder="Select a Penetration Testing Module...", min_values=1, max_values=1, options=options)
 
@@ -65,7 +35,7 @@ async def on_ready():
 async def start_raid(ctx):
     embed = discord.Embed(
         title="🛡️ SYLAS RED TEAM ENGINE",
-        description="**Select a threat vector to simulate.**\n\nAll tests are non-destructive and self-cleaning. Artifacts will be aggressively scrubbed after 15 seconds. You will be given an option to auto-patch vulnerabilities afterwards.",
+        description="**Select a threat vector to simulate.**\n\nAll destructive tests are self-cleaning. Artifacts will be aggressively scrubbed after 15 seconds. Permissions should be managed exclusively via the Web Dashboard.",
         color=discord.Color.red()
     )
     await ctx.send(embed=embed, view=RaidView())
@@ -82,6 +52,19 @@ async def execute_raid(interaction: discord.Interaction, raid_type: str, origina
     spawned_msgs = []
     
     try:
+        # NEW: VERIFICATION GATE & OVERRIDE AUDIT
+        if raid_type in ["gate", "all"]:
+            await status_msg.edit(embed=discord.Embed(title="🛡️ Vector: Verification Gate Audit", description="Analyzing base channel overrides and @everyone restrictions...", color=discord.Color.blue()))
+            await asyncio.sleep(2)
+            
+            everyone_role = guild.default_role
+            # A secure server should NOT let @everyone send messages globally or create invites
+            if everyone_role.permissions.send_messages or everyone_role.permissions.create_instant_invite:
+                await upsert_vulnerability(str(guild.id), "Verification Gate Bypass", True, "The @everyone role has base permissions to send messages or create invites. Server is exposed to instant raids.")
+            else:
+                await upsert_vulnerability(str(guild.id), "Verification Gate Bypass", False, "Global @everyone permissions are properly restricted.")
+
+        # STRUCTURAL NUKE
         if raid_type in ["nuke", "all"]:
             await status_msg.edit(embed=discord.Embed(title="💥 Vector: Structural Nuke", description="Bypassing channel/role creation limits...", color=discord.Color.orange()))
             try:
@@ -91,38 +74,42 @@ async def execute_raid(interaction: discord.Interaction, raid_type: str, origina
             except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Channel Creation Bypass", False, "Blocked.")
 
             try:
-                r = await guild.create_role(name="Sylas_Bypass", color=discord.Color.red())
-                artifacts.append(r)
-                await upsert_vulnerability(str(guild.id), "Role Creation Bypass", True, "Bypassed restrictions.")
-            except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Role Creation Bypass", False, "Blocked.")
-
-            try:
                 w = await channel.create_webhook(name="Sylas_Exploit")
                 artifacts.append(w)
-                await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Spawned webhook.")
+                await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Spawned unauthorized webhook.")
             except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Webhook Exploitation", False, "Blocked.")
 
-        if raid_type in ["phishing", "ping", "all"]:
-            await status_msg.edit(embed=discord.Embed(title="🧠 Vector: AI Payload Deployment", description="Bypassing Automod and deploying payloads via webhook...", color=discord.Color.orange()))
+        # AI PHISHING PAYLOADS
+        if raid_type in ["phishing", "all"]:
+            model_name = config.get("model", "llama3")
+            await status_msg.edit(embed=discord.Embed(title="🧠 Vector: AI Payload Generation", description=f"Querying `{model_name}` on AWS to generate dynamic phishing payloads. This may take up to 60 seconds...", color=discord.Color.purple()))
+            
             try:
                 webhook = await channel.create_webhook(name="Sylas_Scanner")
                 artifacts.append(webhook)
-                payloads = await generate_raid_payloads(3, raid_type, primary_model=config.get("model", "llama3"))
+                
+                # Query the AI for real payloads
+                payloads = await generate_raid_payloads(3, raid_type, primary_model=model_name)
+                
+                await status_msg.edit(embed=discord.Embed(title="🎣 Vector: Payload Deployment", description="Deploying AI-generated payloads via webhook...", color=discord.Color.red()))
                 
                 for p in payloads:
                     msg = await webhook.send(content=p.get("spam_message", "HACKED"), username=p.get("username", "Ghost"), wait=True)
                     spawned_msgs.append(msg)
                     active_raid_messages[msg.id] = {"time": discord.utils.utcnow(), "channel_id": channel.id}
                     await asyncio.sleep(0.5)
-                await upsert_vulnerability(str(guild.id), "Automod Defense", True, f"Automod failed to block {raid_type} payloads.")
+                    
+                await upsert_vulnerability(str(guild.id), "Automod Defense", True, f"Automod failed to block AI payloads.")
             except discord.Forbidden:
                 await upsert_vulnerability(str(guild.id), "Automod Defense", False, "Blocked from sending webhooks.")
 
-        await status_msg.edit(embed=discord.Embed(title="⏳ Tracking Time-To-Kill (TTK)", description="Monitoring moderator response for 15 seconds before absolute self-destruction...", color=discord.Color.yellow()))
-        await asyncio.sleep(15) 
+        # TIME TO KILL TRACKING
+        if spawned_msgs:
+            await status_msg.edit(embed=discord.Embed(title="⏳ Tracking Time-To-Kill (TTK)", description="Monitoring moderator response for 15 seconds before absolute self-destruction...", color=discord.Color.yellow()))
+            await asyncio.sleep(15) 
 
     finally:
-        # ABSOLUTE GUARANTEED CLEANUP. This will execute even if the code errors out.
+        # ABSOLUTE GUARANTEED CLEANUP.
         cleanup_tasks = [entity.delete(reason="Sylas Zero-Footprint Cleanup") for entity in artifacts if entity]
         cleanup_tasks.extend([msg.delete() for msg in spawned_msgs if msg])
         
@@ -137,13 +124,12 @@ async def execute_raid(interaction: discord.Interaction, raid_type: str, origina
         try: await original_msg.delete()
         except: pass
 
-        # Provide Final Summary & Offer Auto-Remediation
         embed = discord.Embed(
             title="✅ AUDIT COMPLETE & SCRUBBED", 
-            description="All active vectors tested. Artifacts have been strictly wiped to maintain a zero footprint.\n\n**If vulnerabilities were found, would you like Sylas to instantly patch them?**",
+            description="All active vectors tested. Artifacts have been strictly wiped to maintain a zero footprint.\n\n**Please visit the Sylas Web Dashboard to review the Threat Map and manage role permissions.**",
             color=discord.Color.green()
         )
-        await channel.send(embed=embed, view=RemediationView(guild), delete_after=60.0)
+        await channel.send(embed=embed, delete_after=60.0)
 
 @bot.event
 async def on_message_delete(message):
