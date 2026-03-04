@@ -1,42 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{ guild_name }} Settings</title>
+    <title>{{ config.server_id }} Settings</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>body { background-color: #09090b; color: #f4f4f5; }</style>
 </head>
-<body>
-    <h1>{{ guild_name }} Settings</h1>
+<body class="p-10 max-w-2xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">Sylas Engine: Server Configuration</h1>
 
-    <form method="post" action="/server/{{ guild_id }}/update">
+    <form method="post" action="/server/{{ guild_id }}/update" class="bg-zinc-900 p-6 rounded-lg border border-zinc-800 space-y-4">
+        
+        <div>
+            <label class="block text-sm font-bold text-zinc-400 mb-1">Bot Command Prefix:</label>
+            <input type="text" name="prefix" value="{{ config.prefix | default('!') }}" class="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-white">
+        </div>
 
-        <label>Prefix:</label><br>
-        <input type="text" name="prefix" value="{{ config.prefix }}"><br><br>
+        <div>
+            <label class="block text-sm font-bold text-zinc-400 mb-1">AI Infiltration Model:</label>
+            <select name="model" class="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-white">
+                {% for m in models %}
+                    <option value="{{ m }}" {% if m == config.model %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+            <p class="text-xs text-zinc-500 mt-1">Llama 3 is recommended for generating complex payload bypasses.</p>
+        </div>
 
-        <label>Model:</label><br>
-        <select name="model">
-            {% for m in models %}
-                <option value="{{ m }}"
-                    {% if m == config.model %}selected{% endif %}>
-                    {{ m }}
-                </option>
-            {% endfor %}
-        </select><br><br>
-
-        <label>Temperature:</label><br>
-        <input type="number" step="0.1" name="temperature"
-               value="{{ config.temperature }}"><br><br>
-
-        <label>AI Enabled:</label>
-        <input type="checkbox" name="ai_enabled"
-            {% if config.ai_enabled %}checked{% endif %}><br><br>
-
-        <label>Respond To Every Message:</label>
-        <input type="checkbox" name="respond_every_message"
-            {% if config.respond_every_message %}checked{% endif %}><br><br>
-
-        <button type="submit">Save Settings</button>
+        <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded w-full transition">Save Target Settings</button>
     </form>
 
-    <br>
-    <a href="/dashboard">Back</a>
+    <div class="mt-6 flex justify-between">
+        <a href="/dashboard" class="text-zinc-500 hover:text-white transition">← Back to Dashboard</a>
+        <a href="/server/{{ guild_id }}/audit" class="text-emerald-500 hover:text-emerald-400 font-bold transition">View Security Audit Log →</a>
+    </div>
 </body>
 </html>
