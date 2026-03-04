@@ -1,61 +1,79 @@
-import os, re, discord
+import os, asyncio, discord
 from discord.ext import commands
-from datetime import datetime
-from db import get_server_config, ensure_player, players, events
-from ai import arbitrate_claim
+from db import log_probe
+from ai import generate_raid_wave
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-BASE_URL = os.getenv("BASE_URL", "https://your-app.onrender.com")
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-async def get_prefix(bot, message):
-    if not message.guild: return "!"
-    config = await get_server_config(str(message.guild.id))
-    return config.get("prefix", "!")
-
-bot = commands.Bot(command_prefix=get_prefix, intents=discord.Intents.all())
-
-user_last_event = {}
-pair_last_event = {}
-CLAIM_REGEX = re.compile(r"\b(i beat|i destroyed|i 3-0d|i smoked)\b", re.IGNORECASE)
-
-@bot.command(name="leaderboard", aliases=["lb"])
-async def leaderboard_cmd(ctx):
-    url = f"{BASE_URL}/server/{ctx.guild.id}/leaderboard"
-    await ctx.send(f"🏆 **STATUSCORE ARENA**: {url}")
+active_raid_messages = {} # Tracks messages to score mods when they delete them
 
 @bot.event
-async def on_message(message):
-    if message.author.bot or not message.guild: return
-    config = await get_server_config(str(message.guild.id))
-    
-    if CLAIM_REGEX.search(message.content) and message.mentions and config.get("ai_enabled"):
-        server_id, actor_id = str(message.guild.id), str(message.author.id)
-        target_id = str(message.mentions[0].id)
-        
-        now = datetime.utcnow()
-        if (user_last_event.get(actor_id) and (now - user_last_event[actor_id]).total_seconds() < 30): 
-            return
-        user_last_event[actor_id] = now
+async def on_ready():
+    print(f"🔥 Sylas Chaos Engine is online.")
 
-        await ensure_player(server_id, actor_id, message.author.display_name)
-        await ensure_player(server_id, target_id, message.mentions[0].display_name)
+@bot.command(name="startraid")
+@commands.has_permissions(administrator=True)
+async def start_raid(ctx, wave_size: int = 5):
+    guild = ctx.guild
+    await ctx.send(f"⚠️ **RED TEAM TEST INITIATED.** Emulating {wave_size} hostile actors...")
 
-        verdict = await arbitrate_claim(config["model"], message.author.display_name, message.mentions[0].display_name, message.content)
+    # --- THE PHALANX: WEBHOOK SPAM TEST ---
+    try:
+        webhook = await ctx.channel.create_webhook(name="Sylas_Vulnerability_Scanner")
+        payloads = await generate_raid_wave(wave_size)
         
-        if verdict["verdict"] == "valid":
-            await players.update_one({"server_id": server_id, "discord_id": actor_id}, {"$inc": {"credibility": 5}, "$set": {"lastActive": now}})
-            await players.update_one({"server_id": server_id, "discord_id": target_id}, {"$inc": {"fraudIndex": 5}, "$set": {"lastActive": now}})
-            await message.reply("⚖️ **VERIFIED**. Stats updated.")
-        elif verdict["verdict"] == "invalid":
-            await players.update_one({"server_id": server_id, "discord_id": actor_id}, {"$inc": {"fraudIndex": 5}, "$set": {"lastActive": now}})
-            await message.reply("⚖️ **INVALID CLAIM**. Fraud Index increased.")
-        else:
-            # Safe failure state
-            await message.reply("⚖️ **SYSTEM ERROR**. The AI referee tripped over the cables. No stats changed. Try again later.")
-        
-        await events.insert_one({"server_id": server_id, "actor": actor_id, "target": target_id, "createdAt": now})
+        for p in payloads:
+            msg = await webhook.send(
+                content=p.get("spam_message", "HACKED"), 
+                username=p.get("username", "Ghost_User"),
+                avatar_url="https://i.imgur.com/vHq0A6y.png",
+                wait=True
+            )
+            active_raid_messages[msg.id] = {"time": discord.utils.utcnow(), "modded": False}
+            await asyncio.sleep(2) # Protects Render CPU from rate-limit spikes
+            
+        await webhook.delete()
+        await log_probe(str(guild.id), "Automod/Spam Defense", "COMPLETE", f"Fired {wave_size} payloads.")
+    except discord.Forbidden:
+        await ctx.send("🛡️ **PASS:** I am not allowed to create Webhooks here.")
 
-    await bot.process_commands(message)
+    # --- THE INQUISITOR: PERMISSION PROBING ---
+    await ctx.send("🔍 **PROBING SERVER PERMISSIONS...**")
+    await asyncio.sleep(1)
+
+    # Probe 1: Unauthorized Channel Creation
+    try:
+        hacked_channel = await guild.create_text_channel("sylas-audit-fail")
+        await ctx.send("🚨 **FAIL:** I successfully created a channel! Fix your `@everyone` permissions.")
+        await log_probe(str(guild.id), "Unauthorized Channel Creation", "FAIL", "Channel created.")
+        await hacked_channel.delete()
+    except discord.Forbidden:
+        await ctx.send("🛡️ **PASS:** Unauthorized channel creation blocked.")
+
+    # Probe 2: Unauthorized Role Spam
+    try:
+        hacked_role = await guild.create_role(name="Bypass_Test", color=discord.Color.red())
+        await ctx.send("🚨 **CRITICAL FAIL:** I successfully created a role!")
+        await log_probe(str(guild.id), "Unauthorized Role Creation", "FAIL", "Role created.")
+        await hacked_role.delete()
+    except discord.Forbidden:
+        await ctx.send("🛡️ **PASS:** Unauthorized role creation blocked.")
+
+    await ctx.send("🏁 **STRESS TEST COMPLETE.** Tracking mod response time for active spam...")
+
+# --- THE WARDEN: MODERATOR TRACKING ---
+@bot.event
+async def on_message_delete(message):
+    if message.id in active_raid_messages:
+        time_alive = (discord.utils.utcnow() - active_raid_messages[message.id]["time"]).total_seconds()
+        # Fetch the audit log to see WHICH mod deleted it
+        async for entry in message.guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=1):
+            if entry.target.id == message.author.id:
+                mod = entry.user
+                await message.channel.send(f"🛡️ **THREAT NEUTRALIZED.** {mod.mention} deleted the spam in {int(time_alive)} seconds.")
+                del active_raid_messages[message.id]
+                break
 
 async def start_bot():
     await bot.start(DISCORD_TOKEN)
