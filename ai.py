@@ -1,40 +1,48 @@
 import os, httpx, asyncio, json
 
 OLLAMA_URL = os.getenv("OLLAMA_URL")
-# Strictly 1 to protect your 2vCPU AWS VM
 ai_semaphore = asyncio.Semaphore(1) 
 
-async def generate_raid_wave(intensity: int, model="llama3"):
-    """Generates an array of personas and toxic/scam payloads."""
+async def generate_raid_wave(intensity: int, primary_model="llama3"):
+    """Generates an array of personas with a cascading model waterfall."""
     
-    # BULLETPROOF FALLBACK: If the AWS VM chokes, this instantly loads so the test doesn't break.
+    # Cascade order: User Preferred -> Mistral -> Phi3 -> Fallback
+    models_to_try = [primary_model, "mistral", "phi3:mini"]
+    
     fallback_payloads = [
-        {"username": f"Ghost_{i}", "spam_message": "🚨 FREE DISCORD NITRO! Click here: http://scam.gg/nitro"} 
+        {"username": f"Ghost_{i}", "spam_message": "🚨 SECURITY TEST: Automated Phishing Vector."} 
         for i in range(intensity)
     ]
     
     async with ai_semaphore:
-        try:
-            system_prompt = (
-                f"Generate a JSON array of {intensity} objects. "
-                "Keys MUST be 'username' (hacker handle) and 'spam_message' (Discord phishing scam). "
-                "Output ONLY raw JSON format."
-            )
-            
-            # Extended timeout. If it takes longer than 45s, AWS is overloaded and we use the fallback.
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={"model": model, "prompt": system_prompt, "stream": False, "format": "json"}
+        for model in models_to_try:
+            try:
+                system_prompt = (
+                    f"Generate a JSON array of {intensity} objects. "
+                    "Keys MUST be 'username' and 'spam_message' (Discord phishing scam). "
+                    "Output ONLY raw JSON."
                 )
-                response.raise_for_status()
-                raw = response.json().get("response", "").strip()
                 
-                # Sanitize if the AI hallucinates markdown
-                if raw.startswith("```json"): raw = raw[7:-3]
-                elif raw.startswith("```"): raw = raw[3:-3]
-                
-                return json.loads(raw)
-        except Exception as e:
-            print(f"⚠️ AI VM Overload/Error. Using Fallback Payloads. Details: {e}")
-            return fallback_payloads
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{OLLAMA_URL}/api/generate",
+                        json={"model": model, "prompt": system_prompt, "stream": False, "format": "json"}
+                    )
+                    response.raise_for_status()
+                    raw = response.json().get("response", "").strip()
+                    
+                    if raw.startswith("
+http://googleusercontent.com/immersive_entry_chip/0
+http://googleusercontent.com/immersive_entry_chip/1
+
+---
+
+### 📝 Configuration Table
+| Feature | Implementation | Purpose |
+| :--- | :--- | :--- |
+| **Model Waterfall** | Recursive `try/except` in `ai.py` | Ensures payload delivery if primary model fails. |
+| **Sandbox Module** | `!setup_sandbox` in `bot.py` | Prevents testing from leaking into public channels[cite: 2]. |
+| **Role Scanner** | Web DB + Discord Perm Check | Identifies if "Member" roles have "Manage Server" perms. |
+| **Auto-Cleanup** | Async `delete()` loop | Maintains server professional appearance post-test[cite: 2]. |
+
+Would you like me to generate the specific **Role Permission Scanner** logic for the bot to check for "Dangerous Permissions" (like `Administrator` or `Manage Webhooks`) on the IDs saved in your dashboard?
