@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Sylas | Permission Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f4f4f5; }</style>
+    <script>
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(tabName).classList.remove('hidden');
+            
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('bg-red-600', 'text-white'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.add('bg-zinc-800', 'text-zinc-400'));
+            
+            document.getElementById('btn-' + tabName).classList.add('bg-red-600', 'text-white');
+            document.getElementById('btn-' + tabName).classList.remove('bg-zinc-800', 'text-zinc-400');
+        }
+
+        function filterList(inputId, listId) {
+            let input = document.getElementById(inputId).value.toLowerCase();
+            let items = document.getElementById(listId).getElementsByClassName('list-item');
+            for (let i = 0; i < items.length; i++) {
+                let text = items[i].textContent || items[i].innerText;
+                if (text.toLowerCase().indexOf(input) > -1) {
+                    items[i].style.display = "";
+                } else {
+                    items[i].style.display = "none";
+                }
+            }
+        }
+    </script>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
+        <div class="p-6 border-b border-zinc-800">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-red-600">.AI</span></h1>
+            <p class="text-xs text-zinc-500 mt-1 uppercase tracking-widest">Enterprise Suite</p>
+        </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="/server/{{ guild_id }}" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition">🛡️ Live Security Sync</a>
+            <a href="#" class="block px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20">👥 Permission Manager</a>
+            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition mt-8">← Global Servers</a>
+        </nav>
+    </aside>
+
+    <main class="flex-1 overflow-y-auto p-10">
+        <div class="max-w-6xl mx-auto">
+            <header class="mb-10 border-b border-zinc-800 pb-6">
+                <h2 class="text-4xl font-black text-white mb-2 tracking-tight">Advanced Permission Manager</h2>
+                <p class="text-zinc-400 text-lg">Search and manage user, role, and bot permissions for <strong>{{ guild_name }}</strong>.</p>
+            </header>
+
+            <div class="flex space-x-4 mb-8">
+                <button id="btn-roles" onclick="switchTab('roles')" class="tab-btn bg-red-600 text-white px-6 py-3 rounded-lg font-bold transition">Roles</button>
+                <button id="btn-users" onclick="switchTab('users')" class="tab-btn bg-zinc-800 text-zinc-400 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold transition">Users</button>
+                <button id="btn-bots" onclick="switchTab('bots')" class="tab-btn bg-zinc-800 text-zinc-400 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold transition">Bots / Integrations</button>
+            </div>
+
+            <div id="roles" class="tab-content">
+                <input type="text" id="search-roles" onkeyup="filterList('search-roles', 'list-roles')" placeholder="Search for a role..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none shadow-lg">
+                <div id="list-roles" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2">
+                    {% for r in roles %}
+                    <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex justify-between items-center shadow-md hover:border-zinc-600 transition">
+                        <div class="flex items-center gap-3">
+                            <div class="w-4 h-4 rounded-full" style="background-color: {{ r.color }};"></div>
+                            <span class="font-bold text-white">{{ r.name }}</span>
+                        </div>
+                        <a href="/server/{{ guild_id }}" class="text-xs bg-zinc-800 hover:bg-red-600 text-white px-3 py-2 rounded transition">Edit Perms</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div id="users" class="tab-content hidden">
+                <input type="text" id="search-users" onkeyup="filterList('search-users', 'list-users')" placeholder="Search for a user..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none shadow-lg">
+                <div id="list-users" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2">
+                    {% for u in users %}
+                    <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex items-center gap-4 shadow-md hover:border-zinc-600 transition">
+                        {% if u.avatar %}
+                            <img src="{{ u.avatar }}" class="w-10 h-10 rounded-full bg-zinc-800">
+                        {% else %}
+                            <div class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-500 font-bold">?</div>
+                        {% endif %}
+                        <div>
+                            <span class="font-bold text-white block">{{ u.name }}</span>
+                            <span class="text-xs text-zinc-500 font-mono">ID: {{ u.id }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div id="bots" class="tab-content hidden">
+                <input type="text" id="search-bots" onkeyup="filterList('search-bots', 'list-bots')" placeholder="Search for a bot..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none shadow-lg">
+                <div id="list-bots" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2">
+                    {% for b in bots %}
+                    <div class="list-item bg-[#141519] border border-zinc-800 p-5 rounded-xl flex items-center gap-4 shadow-md hover:border-zinc-600 transition">
+                        {% if b.avatar %}
+                            <img src="{{ b.avatar }}" class="w-10 h-10 rounded-lg bg-zinc-800">
+                        {% else %}
+                            <div class="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-500 font-bold text-xl">🤖</div>
+                        {% endif %}
+                        <div>
+                            <span class="font-bold text-white block">{{ b.name }}</span>
+                            <span class="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded uppercase font-bold text-[10px] tracking-wide">Integration</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+        </div>
+    </main>
+</body>
+</html>
