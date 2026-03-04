@@ -7,21 +7,42 @@
     <style>body { font-family: 'Inter', sans-serif; background-color: #0f1115; color: #fff; }</style>
 </head>
 <body class="min-h-screen py-20 px-6">
-    <div class="max-w-6xl mx-auto text-center mb-16">
+    <div class="max-w-6xl mx-auto text-center mb-16 relative">
         <h1 class="text-5xl font-black tracking-tight mb-4">Your Infrastructure</h1>
-        <p class="text-zinc-400 text-lg italic">Select a target guild to initialize the chaos cycle.</p>
+        <p class="text-zinc-400 text-lg italic">Select a target guild to initialize the configuration.</p>
+        
+        {% if is_master %}
+        <div class="mt-8">
+            <button onclick="accessMasterPanel()" class="bg-red-900/30 border border-red-600 text-red-500 hover:bg-red-600 hover:text-white font-bold py-3 px-8 rounded-xl transition shadow-[0_0_15px_rgba(220,38,38,0.2)]">
+                👑 Access Master Control
+            </button>
+        </div>
+        <script>
+            function accessMasterPanel() {
+                let key = prompt("⚠️ RESTRICTED ACCESS ⚠️\n\nEnter Master Key:");
+                if (key) {
+                    window.location.href = "/admin?key=" + encodeURIComponent(key);
+                }
+            }
+        </script>
+        {% endif %}
+
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
         {% for guild in user.guilds %}
         <a href="/server/{{ guild.id }}" class="group block bg-[#181a20] border border-zinc-800 rounded-2xl p-8 hover:border-red-600 transition-all duration-300">
             <div class="flex items-center space-x-6">
-                <div class="h-16 w-16 bg-zinc-800 rounded-full flex items-center justify-center text-2xl font-bold group-hover:text-red-500 transition-colors">
-                    {{ guild.name[0] }}
+                <div class="h-16 w-16 bg-zinc-800 rounded-full flex items-center justify-center text-xl font-bold overflow-hidden">
+                    {% if guild.icon %}
+                        <img src="https://cdn.discordapp.com/icons/{{ guild.id }}/{{ guild.icon }}.png" class="w-full h-full object-cover">
+                    {% else %}
+                        {{ guild.name[0] }}
+                    {% endif %}
                 </div>
-                <div>
-                    <h2 class="text-xl font-bold">{{ guild.name }}</h2>
-                    <p class="text-sm text-zinc-500 mt-1 uppercase tracking-widest">Access Panel →</p>
+                <div class="text-left">
+                    <h2 class="text-xl font-bold group-hover:text-red-500 transition">{{ guild.name }}</h2>
+                    <p class="text-zinc-500 text-sm mt-1">Configure & Map</p>
                 </div>
             </div>
         </a>
