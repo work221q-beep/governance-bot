@@ -12,7 +12,6 @@
         @keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }
     </style>
     <script>
-        // Reads URL parameters to open the correct tab and show Toast notifications
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
@@ -60,12 +59,11 @@
             }, 5000);
         }
 
-        // Submits a hidden form POST request with the specific Reason
         function executeModAction(action, id, name, tab) {
             let readableAction = action === 'timeout' ? 'time out' : action;
             let reason = prompt(`Provide a reason to ${readableAction} ${name}:`, "Web Admin Action");
             
-            if (reason === null) return; // User clicked Cancel
+            if (reason === null) return; 
             
             let form = document.createElement('form');
             form.method = 'POST';
@@ -147,9 +145,9 @@
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="executeModAction('timeout', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-yellow-900/30 text-yellow-500 hover:bg-yellow-600 hover:text-white px-3 py-2 rounded font-bold transition">Timeout 10m</button>
-                            <button onclick="executeModAction('kick', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
-                            <button onclick="executeModAction('ban', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
+                            <button data-id="{{ u.id }}" data-name="{{ u.name }}" onclick="executeModAction('timeout', this.dataset.id, this.dataset.name, 'users')" class="text-xs bg-yellow-900/30 text-yellow-500 hover:bg-yellow-600 hover:text-white px-3 py-2 rounded font-bold transition">Timeout 10m</button>
+                            <button data-id="{{ u.id }}" data-name="{{ u.name }}" onclick="executeModAction('kick', this.dataset.id, this.dataset.name, 'users')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
+                            <button data-id="{{ u.id }}" data-name="{{ u.name }}" onclick="executeModAction('ban', this.dataset.id, this.dataset.name, 'users')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -169,8 +167,8 @@
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="executeModAction('kick', '{{ b.id }}', '{{ b.name|replace(\"'\", \"\\\\'\") }}', 'bots')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
-                            <button onclick="executeModAction('ban', '{{ b.id }}', '{{ b.name|replace(\"'\", \"\\\\'\") }}', 'bots')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
+                            <button data-id="{{ b.id }}" data-name="{{ b.name }}" onclick="executeModAction('kick', this.dataset.id, this.dataset.name, 'bots')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
+                            <button data-id="{{ b.id }}" data-name="{{ b.name }}" onclick="executeModAction('ban', this.dataset.id, this.dataset.name, 'bots')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
                         </div>
                     </div>
                     {% endfor %}
