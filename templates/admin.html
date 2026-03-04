@@ -4,9 +4,8 @@
     <title>Sylas | Master Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } </style>
+    <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } textarea { resize: vertical; } </style>
     <script>
-        // Tab system just like the Permission Manager
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
@@ -24,6 +23,9 @@
             
             document.getElementById('btn-' + tabName).classList.add('bg-red-600', 'text-white');
             document.getElementById('btn-' + tabName).classList.remove('bg-[#0f1115]', 'text-zinc-400');
+            
+            // Update URL without reloading the page so refreshes stay on the correct tab
+            window.history.replaceState(null, null, "?tab=" + tabName);
         }
     </script>
 </head>
@@ -65,11 +67,8 @@
                 <span class="text-2xl font-black {% if ollama_status == 'ONLINE' %}text-emerald-500{% else %}text-red-600{% endif %}">
                     {{ ollama_status }}
                 </span>
-                <form method="post" action="/admin/force_harvest">
-                    <button type="submit" onclick="this.innerHTML='Pinging...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-bold text-white transition shadow-[0_0_15px_rgba(147,51,234,0.3)]">Force Generation</button>
-                </form>
             </div>
-            <p class="text-zinc-500 text-sm mt-4">Manually trigger the background worker to scrape payloads from Ollama.</p>
+            <p class="text-zinc-500 text-sm mt-4">Status of the remote Ollama LLM worker.</p>
         </div>
     </div>
 
@@ -77,13 +76,26 @@
         <div class="flex justify-between items-center border-b border-zinc-800 pb-4 mb-6">
             <div>
                 <h3 class="text-2xl font-bold text-white">Classified Armory</h3>
-                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }}</p>
+                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }} / 50 Cap</p>
             </div>
-            <form method="post" action="/admin/purge_armory" onsubmit="return confirm('WARNING: This will instantly delete all payloads. Proceed?');">
-                <button type="submit" class="bg-red-900/30 text-red-500 border border-red-900 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg font-bold transition">
-                    ⚠️ PURGE ALL PAYLOADS
+            
+            <div class="flex gap-3">
+                <button onclick="window.location.href='/admin?tab=armory'" class="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg font-bold transition border border-zinc-700">
+                    🔄 Refresh
                 </button>
-            </form>
+                
+                <form method="post" action="/admin/force_harvest">
+                    <button type="submit" onclick="this.innerHTML='Generating...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold transition shadow-[0_0_15px_rgba(147,51,234,0.3)]">
+                        ⚡ Force AI Generation
+                    </button>
+                </form>
+
+                <form method="post" action="/admin/purge_armory" onsubmit="return confirm('WARNING: This will instantly delete all payloads. Proceed?');">
+                    <button type="submit" class="bg-red-900/30 text-red-500 border border-red-900 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg font-bold transition">
+                        ⚠️ PURGE ALL
+                    </button>
+                </form>
+            </div>
         </div>
         
         {% if payloads %}
@@ -102,22 +114,64 @@
             {% endfor %}
             </div>
         {% else %}
-            <p class="text-zinc-500 italic text-center py-10">Armory is completely empty.</p>
+            <p class="text-zinc-500 italic text-center py-10">Armory is completely empty. Click 'Force AI Generation' and refresh the page in 30 seconds.</p>
         {% endif %}
     </div>
 
-    <div id="db" class="tab-content hidden grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div id="db" class="tab-content hidden space-y-8">
+        
         <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-2">Threat Map Data</h3>
-            <p class="text-zinc-500 text-sm mb-6">Historical Vulnerability Records</p>
-            <div class="text-4xl font-black text-white">{{ vuln_count }} <span class="text-lg text-zinc-600 font-medium">documents</span></div>
+            <h3 class="text-xl font-bold text-white mb-2">Collection: vulnerability_state</h3>
+            <p class="text-zinc-500 text-sm mb-6">Total Documents: {{ vulns|length }}</p>
+            
+            {% if vulns %}
+                <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                {% for v in vulns %}
+                    <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-xs font-mono text-zinc-500">ID: {{ v._id }}</span>
+                            <form method="post" action="/admin/db/delete/vulns/{{ v._id }}" onsubmit="return confirm('Delete document forever?');">
+                                <button class="text-xs text-red-500 hover:text-red-400 font-bold">🗑️ Delete Record</button>
+                            </form>
+                        </div>
+                        <form method="post" action="/admin/db/edit/vulns/{{ v._id }}" class="space-y-3">
+                            <textarea name="raw_json" class="w-full bg-[#09090b] text-emerald-400 font-mono text-sm p-3 rounded border border-zinc-800 focus:border-red-500 focus:outline-none" rows="5">{{ v|tojson(indent=2) }}</textarea>
+                            <button type="submit" class="bg-zinc-800 hover:bg-emerald-600 text-white px-4 py-2 rounded text-sm font-bold transition border border-zinc-700">💾 Save Raw JSON</button>
+                        </form>
+                    </div>
+                {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-zinc-500 italic">No vulnerability records found.</p>
+            {% endif %}
         </div>
 
         <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-2">Server Configurations</h3>
-            <p class="text-zinc-500 text-sm mb-6">Active tracked Guilds</p>
-            <div class="text-4xl font-black text-white">{{ server_count }} <span class="text-lg text-zinc-600 font-medium">documents</span></div>
+            <h3 class="text-xl font-bold text-white mb-2">Collection: server_configs</h3>
+            <p class="text-zinc-500 text-sm mb-6">Total Documents: {{ configs|length }}</p>
+            
+            {% if configs %}
+                <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                {% for c in configs %}
+                    <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-xs font-mono text-zinc-500">ID: {{ c._id }}</span>
+                            <form method="post" action="/admin/db/delete/configs/{{ c._id }}" onsubmit="return confirm('Delete document forever?');">
+                                <button class="text-xs text-red-500 hover:text-red-400 font-bold">🗑️ Delete Record</button>
+                            </form>
+                        </div>
+                        <form method="post" action="/admin/db/edit/configs/{{ c._id }}" class="space-y-3">
+                            <textarea name="raw_json" class="w-full bg-[#09090b] text-emerald-400 font-mono text-sm p-3 rounded border border-zinc-800 focus:border-red-500 focus:outline-none" rows="3">{{ c|tojson(indent=2) }}</textarea>
+                            <button type="submit" class="bg-zinc-800 hover:bg-emerald-600 text-white px-4 py-2 rounded text-sm font-bold transition border border-zinc-700">💾 Save Raw JSON</button>
+                        </form>
+                    </div>
+                {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-zinc-500 italic">No configuration records found.</p>
+            {% endif %}
         </div>
+
     </div>
 
 </body>
