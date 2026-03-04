@@ -67,9 +67,6 @@ async def dashboard(request: Request):
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
 
-# ==========================================
-# 🛑 MASTER ADMIN PANEL (PROTECTED)
-# ==========================================
 @app.get("/admin")
 async def admin_panel(request: Request, key: str = None):
     admin_auth = request.cookies.get("admin_auth")
@@ -87,7 +84,7 @@ async def admin_panel(request: Request, key: str = None):
 
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     
-    # SUDO DB FETCH: Dynamically pull every collection inside the database
+    # SUDO DB FETCH: Dynamically pull every collection and format datetimes safely
     db = payload_armory.database
     collection_names = await db.list_collection_names()
     
@@ -96,8 +93,9 @@ async def admin_panel(request: Request, key: str = None):
         docs = await db[coll_name].find().sort("_id", -1).to_list(100)
         for d in docs: 
             d["_id"] = str(d["_id"])
-            for k, v in d.items():
-                if isinstance(v, datetime.datetime): d[k] = v.isoformat()
+            for key, val in d.items():
+                if isinstance(val, datetime.datetime):
+                    d[key] = val.isoformat()
         db_structure[coll_name] = docs
     
     return templates.TemplateResponse("admin.html", {
@@ -154,13 +152,9 @@ async def admin_db_edit_doc(request: Request, collection: str, doc_id: str):
         parsed.pop("_id", None) 
         db = payload_armory.database
         await db[collection].update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
-    except Exception as e:
-        print(f"DB Edit Error: {e}")
+    except Exception as e: print(f"DB Edit Error: {e}")
     return RedirectResponse("/admin?tab=db", status_code=303)
 
-# ==========================================
-# 🛡️ LIVE SYNC & PERMISSION MANAGER
-# ==========================================
 @app.get("/server/{guild_id}")
 async def server_panel(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
