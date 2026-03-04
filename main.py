@@ -41,7 +41,6 @@ async def callback(code: str):
         user = (await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})).json()
         guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
 
-    # STRICT: Administrator or Owner ONLY
     manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
     response = RedirectResponse(url="/dashboard")
     response.set_cookie("session", serializer.dumps({"id": user["id"], "username": user["username"], "guilds": manageable_guilds}), httponly=True)
@@ -62,22 +61,21 @@ async def server_panel(request: Request, guild_id: str):
     roles = []
     
     if guild:
-        # Pass the EXACT current state of Discord to the Web UI
-        for r in reversed(guild.roles): # Reversed so highest roles show first
-            if r.name != "@everyone" and not r.managed:
-                current_perms = [perm[0] for perm in r.permissions if perm[1] is True]
-                roles.append({
-                    "id": str(r.id), 
-                    "name": r.name, 
-                    "color": str(r.color) if r.color.value != 0 else "#71717a",
-                    "current": current_perms
-                })
+        for r in reversed(guild.roles): 
+            current_perms = [perm[0] for perm in r.permissions if perm[1] is True]
+            roles.append({
+                "id": str(r.id), 
+                "name": r.name, 
+                "color": str(r.color) if r.color.value != 0 else "#71717a",
+                "current": current_perms,
+                "is_everyone": r.name == "@everyone",
+                "is_bot": r.managed
+            })
     
     return templates.TemplateResponse("server.html", {"request": request, "guild_id": guild_id, "roles": roles, "bot_in_server": bool(guild)})
 
 @app.post("/server/{guild_id}/sync")
 async def sync_server_permissions(request: Request, guild_id: str):
-    """The Live Sync Engine: Rewrites Discord permissions instantly based on Web UI selection."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     
@@ -86,20 +84,14 @@ async def sync_server_permissions(request: Request, guild_id: str):
     
     if guild:
         for r in guild.roles:
-            if r.name != "@everyone" and not r.managed:
-                # Get the checked boxes from the web form for this role
-                selected_perms = form_data.getlist(f"perms_{r.id}")
-                
-                # We need to construct a new Permissions object. 
-                # Start with everything False, then only enable what was checked.
-                all_discord_perms = [p[0] for p in discord.Permissions()]
-                new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
-                
-                try:
-                    # Instantly override Discord
-                    await r.edit(permissions=discord.Permissions(**new_kwargs), reason="Sylas Enterprise: Live Web Sync")
-                except discord.Forbidden:
-                    print(f"Failed to edit {r.name}. Ensure Sylas role is at the top of the hierarchy.")
+            selected_perms = form_data.getlist(f"perms_{r.id}")
+            all_discord_perms = [p[0] for p in discord.Permissions()]
+            new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
+            
+            try:
+                await r.edit(permissions=discord.Permissions(**new_kwargs), reason="Sylas Enterprise: Live Web Sync")
+            except discord.Forbidden:
+                pass # Can't edit roles higher than the bot
 
     return RedirectResponse(f"/server/{guild_id}", status_code=303)
 
