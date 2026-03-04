@@ -1,32 +1,32 @@
 import os, httpx, asyncio, json
 
+# Use the exact URL of your AWS Ollama instance
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 ai_semaphore = asyncio.Semaphore(1) 
 
 async def generate_raid_payloads(intensity: int, raid_type: str = "phishing", primary_model="llama3"):
-    """Generates an array of personas and payloads based on the selected raid type."""
+    """Queries the AI to generate dynamic, contextual raid payloads."""
     
-    # Fast Fallback payloads depending on the selected raid type
-    if raid_type == "ping":
-        fallback = [{"username": "Announcer", "spam_message": "🚨 @everyone CRITICAL ALERT: Verify your account now or face a ban! https://fake-discord-verify.com"}] * intensity
-    else:
-        fallback = [{"username": f"Ghost_{i}", "spam_message": "Hey! I just got 3 months of free Nitro, click here: https://fake-nitro-drop.com"} for i in range(intensity)]
+    fallback = [{"username": "System", "spam_message": "⚠️ AI Engine Timeout. Hardcoded fallback deployed."}] * intensity
     
     async with ai_semaphore:
         try:
-            # Context-Aware AI Generation
-            prompt_context = "Generate a JSON array of Discord phishing scams."
+            # Context-Aware Prompts to force the AI to be creative
             if raid_type == "ping":
-                prompt_context = "Generate a JSON array of urgent Discord announcements that would maliciously ping @everyone."
+                system_prompt = (
+                    f"Generate a JSON array of {intensity} highly urgent Discord announcements designed to trick users into clicking a link. "
+                    "Make them sound like a compromised server owner or a fake Discord Trust & Safety alert. "
+                    "Keys MUST be 'username' and 'spam_message'. Output ONLY raw JSON array."
+                )
+            else:
+                system_prompt = (
+                    f"Generate a JSON array of {intensity} realistic Discord phishing scams. "
+                    "Include crypto drainer lures, fake Nitro gifts, or game beta invites. "
+                    "Keys MUST be 'username' and 'spam_message'. Output ONLY raw JSON array."
+                )
             
-            system_prompt = (
-                f"{prompt_context} Create {intensity} objects. "
-                "Keys MUST be 'username' and 'spam_message'. "
-                "Make them sound realistic. Output ONLY raw JSON array."
-            )
-            
-            # FAST TIMEOUT (10s): If the AI VM is choking, instantly drop to fallback instead of hanging
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # INCREASED TIMEOUT to 60s: Allows AWS Ollama to actually process the request
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={"model": primary_model, "prompt": system_prompt, "stream": False, "format": "json"}
@@ -34,7 +34,9 @@ async def generate_raid_payloads(intensity: int, raid_type: str = "phishing", pr
                 response.raise_for_status()
                 raw = response.json().get("response", "").strip()
                 
+                # Clean markdown formatting if the AI added it
                 if raw.startswith("```json"): raw = raw[7:]
+                if raw.startswith("```"): raw = raw[3:]
                 if raw.endswith("```"): raw = raw[:-3]
                     
                 payloads = json.loads(raw)
@@ -42,6 +44,7 @@ async def generate_raid_payloads(intensity: int, raid_type: str = "phishing", pr
                     return payloads
                 
         except Exception as e:
-            print(f"⚠️ AI generation failed ({e}). Deploying hardcoded {raid_type} fallbacks to keep raid active.")
+            print(f"⚠️ AI Generation Failed or Timed Out ({e}). Falling back to hardcoded payloads.")
+            return fallback
             
     return fallback
