@@ -7,20 +7,23 @@ MONGO_URI = os.getenv("MONGO_URI")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.sylas_chaos 
 
-audit_logs = db.audit_logs
-mod_scores = db.mod_scores
-server_configs = db.server_configs # <-- This was missing!
+server_configs = db.server_configs
+# REPLACED audit_logs WITH vulnerability_state
+vuln_state = db.vulnerability_state 
 
 async def init_indexes():
-    # Auto-delete test logs after 7 days (saves your 512MB Mongo limit)
-    await audit_logs.create_index("timestamp", expireAfterSeconds=604800)
-    await mod_scores.create_index([("server_id", 1), ("mod_id", 1)], unique=True)
+    # Unique index to overwrite the same vulnerability check instead of spamming logs
+    await vuln_state.create_index([("server_id", 1), ("vuln_name", 1)], unique=True)
 
-async def log_probe(server_id: str, probe_type: str, status: str, details: str):
-    await audit_logs.insert_one({
-        "server_id": server_id,
-        "probe_type": probe_type,
-        "status": status, 
-        "details": details,
-        "timestamp": datetime.utcnow()
-    })
+async def upsert_vulnerability(server_id: str, vuln_name: str, is_vulnerable: bool, details: str):
+    """Updates the state of a specific vulnerability (Secure vs Vulnerable)"""
+    status = "VULNERABLE" if is_vulnerable else "SECURE"
+    await vuln_state.update_one(
+        {"server_id": server_id, "vuln_name": vuln_name},
+        {"$set": {
+            "status": status, 
+            "details": details,
+            "last_tested": datetime.utcnow()
+        }},
+        upsert=True
+    )
