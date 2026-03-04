@@ -1,4 +1,4 @@
-import os, asyncio, httpx, discord, datetime
+import os, asyncio, httpx, discord, datetime, json
 from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -19,8 +19,6 @@ DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123") 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-
-# YOUR DISCORD ID GOES HERE (or in Render Env Vars)
 MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID", "YOUR_DISCORD_ID_HERE") 
 
 @app.on_event("startup")
@@ -65,11 +63,8 @@ async def callback(code: str):
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
-    
     session_user = serializer.loads(user_cookie)
-    # 🛑 FAILSAFE 1: Verify if the logged-in user is the Master Admin
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
-    
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
 
 # ==========================================
@@ -93,27 +88,32 @@ async def admin_panel(request: Request, key: str = None):
 
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     
-    # Fetch DB Stats for the Database Manager Tab
-    vuln_count = await vuln_state.count_documents({})
-    server_count = await server_configs.count_documents({})
+    # Raw DB Fetch for the Explorer
+    vulns = await vuln_state.find().sort("last_tested", -1).to_list(50)
+    configs = await server_configs.find().to_list(50)
+    
+    # Convert ObjectIds to strings so Jinja can render the JSON safely
+    for v in vulns: v["_id"] = str(v["_id"])
+    for c in configs: c["_id"] = str(c["_id"])
     
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "ollama_status": ollama_status, "vuln_count": vuln_count, "server_count": server_count
+        "ollama_status": ollama_status, "vulns": vulns, "configs": configs
     })
 
 @app.post("/admin/toggle_bot")
 async def toggle_bot(request: Request):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     engine_state["active"] = not engine_state["active"]
-    return RedirectResponse("/admin", status_code=303)
+    return RedirectResponse("/admin?tab=control", status_code=303)
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     bg_tasks.add_task(harvest_payloads, "phishing")
     bg_tasks.add_task(harvest_payloads, "ping")
-    return RedirectResponse("/admin", status_code=303)
+    # Redirect directly back to the Armory tab
+    return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
 async def admin_delete_payload(request: Request, payload_id: str):
@@ -123,10 +123,31 @@ async def admin_delete_payload(request: Request, payload_id: str):
 
 @app.post("/admin/purge_armory")
 async def admin_purge_armory(request: Request):
-    """Nukes the entire payload armory."""
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
+
+# 🗄️ RAW DATABASE EXPLORER ENDPOINTS
+@app.post("/admin/db/delete/{collection}/{doc_id}")
+async def admin_db_delete(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    if collection == "vulns": await vuln_state.delete_one({"_id": ObjectId(doc_id)})
+    elif collection == "configs": await server_configs.delete_one({"_id": ObjectId(doc_id)})
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/db/edit/{collection}/{doc_id}")
+async def admin_db_edit(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form_data = await request.form()
+    raw_json = form_data.get("raw_json")
+    try:
+        parsed = json.loads(raw_json)
+        parsed.pop("_id", None) # Remove ID to prevent Mongo overwrite errors
+        if collection == "vulns": await vuln_state.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
+        elif collection == "configs": await server_configs.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
+    except Exception as e:
+        print(f"Failed to save DB Edit: {e}")
+    return RedirectResponse("/admin?tab=db", status_code=303)
 
 # ==========================================
 # 🛡️ LIVE SYNC & PERMISSION MANAGER
