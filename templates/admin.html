@@ -5,10 +5,31 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } </style>
+    <script>
+        // Tab system just like the Permission Manager
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tab = urlParams.get('tab');
+            if (tab) { switchTab(tab); }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(tabName).classList.remove('hidden');
+            
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-red-600', 'text-white');
+                el.classList.add('bg-[#0f1115]', 'text-zinc-400');
+            });
+            
+            document.getElementById('btn-' + tabName).classList.add('bg-red-600', 'text-white');
+            document.getElementById('btn-' + tabName).classList.remove('bg-[#0f1115]', 'text-zinc-400');
+        }
+    </script>
 </head>
 <body class="p-10 max-w-6xl mx-auto">
     
-    <header class="flex justify-between items-center mb-10 border-b border-zinc-800 pb-6">
+    <header class="flex justify-between items-center mb-8 border-b border-zinc-800 pb-6">
         <div>
             <h1 class="text-3xl font-black text-red-600 tracking-widest">MASTER CONTROL</h1>
             <p class="text-zinc-500 font-mono text-sm mt-1">RESTRICTED ACCESS</p>
@@ -18,17 +39,24 @@
         </div>
     </header>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+    <div class="flex gap-4 mb-8 border-b border-zinc-800 pb-4">
+        <button id="btn-control" onclick="switchTab('control')" class="tab-btn bg-red-600 text-white px-6 py-3 rounded-lg font-bold transition">⚙️ Control Center</button>
+        <button id="btn-armory" onclick="switchTab('armory')" class="tab-btn bg-[#0f1115] text-zinc-400 hover:text-white px-6 py-3 rounded-lg font-bold transition border border-zinc-800">☣️ Payload Armory</button>
+        <button id="btn-db" onclick="switchTab('db')" class="tab-btn bg-[#0f1115] text-zinc-400 hover:text-white px-6 py-3 rounded-lg font-bold transition border border-zinc-800">🗄️ Database Manager</button>
+    </div>
+
+    <div id="control" class="tab-content grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-4">Engine Status</h3>
+            <h3 class="text-xl font-bold text-white mb-4">Discord Bot Engine</h3>
             <div class="flex items-center justify-between">
                 <span class="text-2xl font-black {% if bot_active %}text-emerald-500{% else %}text-red-600{% endif %}">
                     {% if bot_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
                 <form method="post" action="/admin/toggle_bot">
-                    <button class="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold text-white transition">Toggle Power</button>
+                    <button class="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold text-white transition border border-zinc-700">Toggle Power</button>
                 </form>
             </div>
+            <p class="text-zinc-500 text-sm mt-4">Disabling this prevents anyone globally from running !startraid.</p>
         </div>
 
         <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
@@ -38,16 +66,28 @@
                     {{ ollama_status }}
                 </span>
                 <form method="post" action="/admin/force_harvest">
-                    <button type="submit" onclick="this.innerHTML='Pinging AI...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-bold text-white transition">Force Generation</button>
+                    <button type="submit" onclick="this.innerHTML='Pinging...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-bold text-white transition shadow-[0_0_15px_rgba(147,51,234,0.3)]">Force Generation</button>
                 </form>
             </div>
+            <p class="text-zinc-500 text-sm mt-4">Manually trigger the background worker to scrape payloads from Ollama.</p>
         </div>
     </div>
 
-    <div class="bg-[#0f1115] border border-zinc-800 p-8 rounded-xl shadow-2xl">
-        <h3 class="text-2xl font-bold text-white mb-6 border-b border-zinc-800 pb-2">Classified Armory Database</h3>
+    <div id="armory" class="tab-content hidden bg-[#0f1115] border border-zinc-800 p-8 rounded-xl shadow-2xl">
+        <div class="flex justify-between items-center border-b border-zinc-800 pb-4 mb-6">
+            <div>
+                <h3 class="text-2xl font-bold text-white">Classified Armory</h3>
+                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }}</p>
+            </div>
+            <form method="post" action="/admin/purge_armory" onsubmit="return confirm('WARNING: This will instantly delete all payloads. Proceed?');">
+                <button type="submit" class="bg-red-900/30 text-red-500 border border-red-900 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg font-bold transition">
+                    ⚠️ PURGE ALL PAYLOADS
+                </button>
+            </form>
+        </div>
+        
         {% if payloads %}
-            <div class="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+            <div class="space-y-4 max-h-[500px] overflow-y-auto pr-2">
             {% for p in payloads %}
                 <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg flex justify-between items-center gap-4">
                     <div class="flex-1">
@@ -62,8 +102,22 @@
             {% endfor %}
             </div>
         {% else %}
-            <p class="text-zinc-500 italic">Database is empty.</p>
+            <p class="text-zinc-500 italic text-center py-10">Armory is completely empty.</p>
         {% endif %}
+    </div>
+
+    <div id="db" class="tab-content hidden grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-2">Threat Map Data</h3>
+            <p class="text-zinc-500 text-sm mb-6">Historical Vulnerability Records</p>
+            <div class="text-4xl font-black text-white">{{ vuln_count }} <span class="text-lg text-zinc-600 font-medium">documents</span></div>
+        </div>
+
+        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-2">Server Configurations</h3>
+            <p class="text-zinc-500 text-sm mb-6">Active tracked Guilds</p>
+            <div class="text-4xl font-black text-white">{{ server_count }} <span class="text-lg text-zinc-600 font-medium">documents</span></div>
+        </div>
     </div>
 
 </body>
