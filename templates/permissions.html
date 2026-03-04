@@ -4,8 +4,24 @@
     <title>Sylas | Permission Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f4f4f5; }</style>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f4f4f5; }
+        .toast-enter { animation: fadeIn 0.3s ease-out forwards; }
+        .toast-exit { animation: fadeOut 0.3s ease-in forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }
+    </style>
     <script>
+        // Reads URL parameters to open the correct tab and show Toast notifications
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tab = urlParams.get('tab');
+            if (tab) { switchTab(tab); }
+            
+            const msg = urlParams.get('msg');
+            if (msg) { showToast(decodeURIComponent(msg)); }
+        }
+
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.getElementById(tabName).classList.remove('hidden');
@@ -16,6 +32,7 @@
             document.getElementById('btn-' + tabName).classList.add('bg-red-600', 'text-white');
             document.getElementById('btn-' + tabName).classList.remove('bg-zinc-800', 'text-zinc-400');
         }
+
         function filterList(inputId, listId) {
             let input = document.getElementById(inputId).value.toLowerCase();
             let items = document.getElementById(listId).getElementsByClassName('list-item');
@@ -24,13 +41,52 @@
                 items[i].style.display = text.toLowerCase().indexOf(input) > -1 ? "flex" : "none";
             }
         }
+
         function copyText(text) {
             navigator.clipboard.writeText(text);
-            alert("Copied to clipboard: " + text);
+            showToast("Copied to clipboard: " + text);
+        }
+
+        function showToast(message) {
+            let toast = document.getElementById("toast-notification");
+            toast.innerText = message;
+            toast.classList.remove("hidden", "toast-exit");
+            toast.classList.add("toast-enter");
+            
+            setTimeout(() => {
+                toast.classList.remove("toast-enter");
+                toast.classList.add("toast-exit");
+                setTimeout(() => toast.classList.add("hidden"), 300);
+            }, 5000);
+        }
+
+        // Submits a hidden form POST request with the specific Reason
+        function executeModAction(action, id, name, tab) {
+            let readableAction = action === 'timeout' ? 'time out' : action;
+            let reason = prompt(`Provide a reason to ${readableAction} ${name}:`, "Web Admin Action");
+            
+            if (reason === null) return; // User clicked Cancel
+            
+            let form = document.createElement('form');
+            form.method = 'POST';
+            form.action = `/server/{{ guild_id }}/action/${action}/${id}?tab=${tab}`;
+            
+            let reasonInput = document.createElement('input');
+            reasonInput.type = 'hidden';
+            reasonInput.name = 'reason';
+            reasonInput.value = reason;
+            form.appendChild(reasonInput);
+            
+            document.body.appendChild(form);
+            form.submit();
         }
     </script>
 </head>
-<body class="flex h-screen overflow-hidden">
+<body class="flex h-screen overflow-hidden relative">
+
+    <div id="toast-notification" class="hidden fixed bottom-10 right-10 z-50 bg-[#181a20] border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl font-semibold max-w-sm">
+        Notification text
+    </div>
 
     <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
         <div class="p-6 border-b border-zinc-800">
@@ -77,7 +133,7 @@
 
             <div id="users" class="tab-content hidden">
                 <div class="bg-blue-900/10 border border-blue-900/50 p-4 rounded-xl mb-6 text-blue-400 text-sm">
-                    <strong>Note:</strong> Global Discord permissions are inherited via <strong>Roles</strong>. To edit a user's global access, edit their Roles. Use this panel for direct Moderation actions.
+                    <strong>Note:</strong> Global permissions are inherited via <strong>Roles</strong>. Edit Roles to manage access. Use this panel for absolute moderation actions.
                 </div>
                 <input type="text" id="search-users" onkeyup="filterList('search-users', 'list-users')" placeholder="Search for a user..." class="w-full bg-[#141519] border border-zinc-800 rounded-xl p-4 text-white mb-6 focus:border-red-500 focus:outline-none">
                 <div id="list-users" class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -91,9 +147,9 @@
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <form method="post" action="/server/{{ guild_id }}/action/timeout/{{ u.id }}"><button class="text-xs bg-yellow-900/30 text-yellow-500 hover:bg-yellow-600 hover:text-white px-3 py-2 rounded">Timeout 10m</button></form>
-                            <form method="post" action="/server/{{ guild_id }}/action/kick/{{ u.id }}"><button class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded">Kick</button></form>
-                            <form method="post" action="/server/{{ guild_id }}/action/ban/{{ u.id }}"><button class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded">Ban</button></form>
+                            <button onclick="executeModAction('timeout', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-yellow-900/30 text-yellow-500 hover:bg-yellow-600 hover:text-white px-3 py-2 rounded font-bold transition">Timeout 10m</button>
+                            <button onclick="executeModAction('kick', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
+                            <button onclick="executeModAction('ban', '{{ u.id }}', '{{ u.name|replace(\"'\", \"\\\\'\") }}', 'users')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -113,8 +169,8 @@
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <form method="post" action="/server/{{ guild_id }}/action/kick/{{ b.id }}"><button class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded">Kick</button></form>
-                            <form method="post" action="/server/{{ guild_id }}/action/ban/{{ b.id }}"><button class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded">Ban</button></form>
+                            <button onclick="executeModAction('kick', '{{ b.id }}', '{{ b.name|replace(\"'\", \"\\\\'\") }}', 'bots')" class="text-xs bg-orange-900/30 text-orange-500 hover:bg-orange-600 hover:text-white px-3 py-2 rounded font-bold transition">Kick</button>
+                            <button onclick="executeModAction('ban', '{{ b.id }}', '{{ b.name|replace(\"'\", \"\\\\'\") }}', 'bots')" class="text-xs bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-2 rounded font-bold transition">Ban</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -129,7 +185,7 @@
                         <span class="text-2xl text-zinc-600">{% if 'voice' in c.type %}🔊{% elif 'category' in c.type %}📁{% else %}#️⃣{% endif %}</span>
                         <div>
                             <span class="font-bold text-white block cursor-pointer hover:underline" onclick="copyText('{{ c.name }}')">{{ c.name }}</span>
-                            <span class="text-xs text-zinc-500 font-mono">ID: {{ c.id }}</span>
+                            <span class="text-xs text-zinc-500 font-mono cursor-pointer hover:text-white" onclick="copyText('{{ c.id }}')">ID: {{ c.id }}</span>
                         </div>
                     </div>
                     {% endfor %}
