@@ -20,9 +20,7 @@
         <script>
             function accessMasterPanel() {
                 let key = prompt("⚠️ RESTRICTED ACCESS ⚠️\n\nEnter Master Key:");
-                if (key) {
-                    window.location.href = "/admin?key=" + encodeURIComponent(key);
-                }
+                if (key) { window.location.href = "/admin?key=" + encodeURIComponent(key); }
             }
         </script>
         {% endif %}
