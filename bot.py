@@ -13,7 +13,7 @@ pending_dropdowns = {}
 INNOCENT_POOL = [
     "Did anyone see the new patch notes? Looks sick.",
     "I'm going to grab food, be back in 10 mins.",
-    "Can someone help me with the latest quest? I'm stuck.",
+    "Can someone help me with the latest quest?",
     "Wow, the server is really active today.",
     "Just got a new PC setup, finally hitting 144fps!",
     "Anyone down for some ranked matches tonight?",
@@ -23,7 +23,9 @@ INNOCENT_POOL = [
     "Is the voice channel lagging for anyone else?",
     "I think Discord's API is acting up again.",
     "Brb, my dog is barking at the mailman.",
-    "Does anyone know what time the event starts?"
+    "Does anyone know what time the event starts?",
+    "Finally finished my exams! Time to grind.",
+    "Who's streaming right now? I need something to watch."
 ]
 
 class RaidSelect(discord.ui.Select):
@@ -93,7 +95,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     for s in scams: s["is_malicious"] = True
         
     # 🔥 BURN AFTER READING PROTOCOL
-    scam_ids = [s["_id"] for s in scams if "_id" in s]
+    scam_ids = [s["_id"] for s in scams if s.get("_id")]
     if scam_ids: await payload_armory.delete_many({"_id": {"$in": scam_ids}})
         
     sampled_innocents = random.sample(INNOCENT_POOL, 2)
@@ -124,7 +126,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 
         for _ in range(60):
             wargame = active_wargames.get(game_id)
-            if not wargame or wargame["failed"] or wargame["scams_left"] <= 0: break 
+            if not wargame or wargame["failed"] or wargame["scams_left"] <= 0: break
             await asyncio.sleep(1)
 
     finally:
@@ -147,7 +149,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             except: pass
             active_wargames.pop(game_id, None)
 
-        # STRICT CLEANUP
         for msg in spawned_msgs:
             try: await msg.delete()
             except: pass
