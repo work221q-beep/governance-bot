@@ -1,27 +1,25 @@
 import os, asyncio, discord
 from discord.ext import commands
-from db import upsert_vulnerability, server_configs, role_baselines
+from db import upsert_vulnerability, server_configs
 from ai import generate_raid_wave
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
 active_raid_messages = {}
-pending_remediations = {} # Stores violations for !fixperms
 
 @bot.event
 async def on_ready():
-    print(f"🔥 Sylas Chaos Engine is online.")
+    print(f"🔥 Sylas Enterprise Core is online.")
 
 @bot.command(name="startraid")
 @commands.has_permissions(administrator=True)
 async def start_raid(ctx, wave_size: int = 3):
+    """Initiates the Red Team Structural Audit."""
     guild = ctx.guild
     config = await server_configs.find_one({"server_id": str(guild.id)}) or {"model": "llama3"}
     
-    status_msg = await ctx.send("🔍 **INITIATING SERVER SECURITY AUDIT...** (Testing Vulnerability Vectors)")
-    
-    # Track artifacts for Zero-Footprint auto-cleanup
+    status_msg = await ctx.send("🔍 **INITIATING THREAT VECTOR AUDIT...**")
     artifacts = []
 
     try:
@@ -42,7 +40,7 @@ async def start_raid(ctx, wave_size: int = 3):
         await upsert_vulnerability(str(guild.id), "Webhook Exploitation", True, "Spawned webhook.")
     except discord.Forbidden: await upsert_vulnerability(str(guild.id), "Webhook Exploitation", False, "Blocked.")
 
-    await status_msg.edit(content="✅ **STRUCTURAL AUDIT COMPLETE.** \n⏳ *Spawning active AI Phishing Raid...*")
+    await status_msg.edit(content="✅ **STRUCTURAL AUDIT COMPLETE.** \n⏳ *Deploying Active Phishing Payloads...*")
     await asyncio.sleep(2) 
     
     webhook = None
@@ -60,12 +58,12 @@ async def start_raid(ctx, wave_size: int = 3):
             active_raid_messages[msg.id] = {"time": discord.utils.utcnow(), "channel_id": ctx.channel.id}
             await asyncio.sleep(1)
             
-        await upsert_vulnerability(str(guild.id), "Automod Defense", True, "Automod failed to block AI payloads.")
+        await upsert_vulnerability(str(guild.id), "Automod Defense", True, "Automod failed to block payloads.")
         
     except discord.Forbidden:
         await upsert_vulnerability(str(guild.id), "Automod Defense", False, "Blocked from sending webhooks.")
 
-    # ZERO FOOTPRINT CLEANUP & SUMMARY (Waits 15 seconds to allow Mods/Automod to react, then deletes everything)
+    # ZERO FOOTPRINT PROTOCOL
     await asyncio.sleep(15) 
     
     for entity in artifacts:
@@ -78,74 +76,13 @@ async def start_raid(ctx, wave_size: int = 3):
             if msg.id in active_raid_messages: del active_raid_messages[msg.id]
         except: pass
 
-    summary_embed = discord.Embed(
-        title="📊 SYLAS AUDIT SUMMARY", 
-        description="All structural penetration vectors tested. Active raid artifacts have been wiped from the server to maintain a zero footprint.\n\nCheck your web dashboard for the updated Vulnerability Map and TTK scores.\n\n*This message will self-destruct in 60 seconds.*",
+    await ctx.send(embed=discord.Embed(
+        title="📊 AUDIT SUMMARY", 
+        description="All structural vectors tested. Raid artifacts wiped for zero footprint.\nCheck web dashboard for Threat Map.",
         color=discord.Color.red()
-    )
-    await ctx.send(embed=summary_embed, delete_after=60.0)
+    ), delete_after=60.0)
     try: await status_msg.delete()
     except: pass
-
-@bot.command(name="scanperms")
-@commands.has_permissions(administrator=True)
-async def scan_perms(ctx):
-    guild = ctx.guild
-    baselines = await role_baselines.find({"server_id": str(guild.id)}).to_list(100)
-    if not baselines:
-        return await ctx.send("⚠️ No role baselines configured. Please set them up in the Web Dashboard first.", delete_after=20.0)
-
-    baseline_map = {b["role_id"]: b.get("allowed_perms", []) for b in baselines}
-    violations = []
-    
-    dangerous_flags = ["administrator", "manage_guild", "manage_roles", "manage_webhooks", "mention_everyone"]
-
-    for role in guild.roles:
-        if role.name == "@everyone" or role.managed: continue
-        
-        allowed = baseline_map.get(str(role.id), [])
-        role_perms = dict(role.permissions)
-        
-        # CORRECTED SYNTAX: checks if the dangerous permission exists and is NOT in the allowed list
-        leaked_perms = [p for p in dangerous_flags if role_perms.get(p) and p not in allowed]
-        
-        if leaked_perms:
-            violations.append({"role": role, "leaks": leaked_perms})
-
-    if not violations:
-        return await ctx.send("✅ **PERMISSIONS SECURE.** No unauthorized dangerous permissions detected.", delete_after=30.0)
-
-    pending_remediations[guild.id] = violations
-    
-    report = "🚨 **PERMISSION LEAKS DETECTED** 🚨\n"
-    for v in violations:
-        report += f"• {v['role'].mention}: `{', '.join(v['leaks'])}`\n"
-    report += "\nType `!fixperms` to automatically strip these unauthorized permissions."
-    
-    await ctx.send(report)
-
-@bot.command(name="fixperms")
-@commands.has_permissions(administrator=True)
-async def fix_perms(ctx):
-    guild = ctx.guild
-    if guild.id not in pending_remediations:
-        return await ctx.send("No pending remediations. Run `!scanperms` first.", delete_after=10.0)
-    
-    violations = pending_remediations[guild.id]
-    fixed_count = 0
-    
-    for v in violations:
-        role = v["role"]
-        leaks = v["leaks"]
-        kwargs = {perm: False for perm in leaks}
-        try:
-            await role.edit(permissions=discord.Permissions(**{**dict(role.permissions), **kwargs}), reason="Sylas Automated Remediation")
-            fixed_count += 1
-        except discord.Forbidden:
-            await ctx.send(f"❌ Failed to fix {role.name}. My role hierarchy is too low.", delete_after=10.0)
-
-    del pending_remediations[guild.id]
-    await ctx.send(f"🛡️ **REMEDIATION COMPLETE.** Successfully patched {fixed_count} roles.", delete_after=60.0)
 
 @bot.event
 async def on_message_delete(message):
