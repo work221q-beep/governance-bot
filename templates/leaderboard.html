@@ -5,27 +5,39 @@
     <style>body { background-color: #09090b; color: #f4f4f5; font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="p-10">
-    <h1 class="text-4xl font-bold mb-10 text-center">STATUS<span class="text-red-600">CORE</span> ARENA</h1>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-6xl mx-auto">
-        <div class="bg-zinc-900 p-6 rounded-lg border border-zinc-800">
-            <h2 class="text-emerald-500 font-bold mb-4 uppercase">Top Credibility</h2>
-            {% for p in top_cred %}
-            <div class="flex justify-between border-b border-zinc-800 py-2">
-                <span>{{ p.username }}</span><span class="text-emerald-400 font-mono">{{ p.credibility }}</span>
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-4xl font-bold mb-2 text-center uppercase tracking-widest">Sylas <span class="text-red-600">Chaos Engine</span></h1>
+        <p class="text-center text-zinc-500 mb-10">Security Operations Center & Audit Logs</p>
+
+        <div class="bg-zinc-900 p-8 rounded-lg border border-zinc-800 mb-10 text-center">
+            <h2 class="text-2xl font-bold text-zinc-400 uppercase">Server Security Score</h2>
+            <div class="text-6xl font-black mt-4 {% if score >= 80 %}text-emerald-500{% elif score >= 50 %}text-yellow-500{% else %}text-red-600{% endif %}">
+                {{ score }}%
             </div>
-            {% endfor %}
+            <p class="text-sm text-zinc-500 mt-2">Based on the latest automated penetration tests.</p>
         </div>
-        <div class="bg-zinc-900 p-6 rounded-lg border border-red-900/30">
-            <h2 class="text-red-500 font-bold mb-4 uppercase">Fraud Watch</h2>
-            {% for p in top_fraud %}
-            <div class="flex justify-between border-b border-zinc-800 py-2">
-                <div class="flex gap-2">
-                    <span>{{ p.username }}</span>
-                    {% if p.fraudIndex >= 75 %}<span class="text-[10px] bg-red-600 px-1 rounded font-bold">⚠ FRAUD WATCH</span>{% endif %}
+
+        <div class="bg-zinc-900 p-6 rounded-lg border border-zinc-800">
+            <h2 class="font-bold mb-6 uppercase text-zinc-400 border-b border-zinc-800 pb-2">Recent Security Probes</h2>
+            
+            {% if logs %}
+                <div class="space-y-4">
+                {% for log in logs %}
+                    <div class="flex justify-between items-center bg-zinc-950 p-4 rounded border {% if log.status == 'PASS' %}border-emerald-900/50{% else %}border-red-900/50{% endif %}">
+                        <div>
+                            <span class="font-bold text-sm tracking-wide {{ 'text-emerald-500' if log.status == 'PASS' else 'text-red-500' }}">
+                                [{{ log.status }}]
+                            </span>
+                            <span class="ml-2 font-mono text-zinc-300">{{ log.probe_type }}</span>
+                            <p class="text-xs text-zinc-500 mt-1">{{ log.details }}</p>
+                        </div>
+                        <span class="text-xs text-zinc-600 font-mono">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+                    </div>
+                {% endfor %}
                 </div>
-                <span class="text-red-500 font-mono">{{ p.fraudIndex }}</span>
-            </div>
-            {% endfor %}
+            {% else %}
+                <p class="text-zinc-600 italic text-center py-10">No security tests run yet. Run !startraid in Discord to populate logs.</p>
+            {% endif %}
         </div>
     </div>
 </body>
