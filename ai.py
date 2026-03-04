@@ -31,18 +31,20 @@ async def generate_raid_wave(intensity: int, primary_model="llama3"):
                     response.raise_for_status()
                     raw = response.json().get("response", "").strip()
                     
-                    if raw.startswith("
-http://googleusercontent.com/immersive_entry_chip/0
-http://googleusercontent.com/immersive_entry_chip/1
-
----
-
-### 📝 Configuration Table
-| Feature | Implementation | Purpose |
-| :--- | :--- | :--- |
-| **Model Waterfall** | Recursive `try/except` in `ai.py` | Ensures payload delivery if primary model fails. |
-| **Sandbox Module** | `!setup_sandbox` in `bot.py` | Prevents testing from leaking into public channels[cite: 2]. |
-| **Role Scanner** | Web DB + Discord Perm Check | Identifies if "Member" roles have "Manage Server" perms. |
-| **Auto-Cleanup** | Async `delete()` loop | Maintains server professional appearance post-test[cite: 2]. |
-
-Would you like me to generate the specific **Role Permission Scanner** logic for the bot to check for "Dangerous Permissions" (like `Administrator` or `Manage Webhooks`) on the IDs saved in your dashboard?
+                    # Clean the raw output to ensure it parses as JSON correctly
+                    if raw.startswith("```json"):
+                        raw = raw[7:]
+                    if raw.endswith("```"):
+                        raw = raw[:-3]
+                        
+                    payloads = json.loads(raw)
+                    if isinstance(payloads, list) and len(payloads) > 0 and "username" in payloads[0]:
+                        return payloads
+                    
+            except Exception as e:
+                print(f"⚠️ Model {model} failed: {e}. Cascading to next model...")
+                continue # Try the next model in the waterfall
+                
+    # If all models fail, return the hardcoded safe payloads to prevent crash
+    print("❌ All AI models failed. Deploying fallback payloads.")
+    return fallback_payloads
