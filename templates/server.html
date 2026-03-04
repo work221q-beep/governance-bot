@@ -1,14 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Sylas Dashboard</title>
+    <title>Sylas | Configuration</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f1115; color: #f4f4f5; }
-        /* Custom Toggle Switch */
-        .toggle-checkbox:checked { right: 0; border-color: #ef4444; }
-        .toggle-checkbox:checked + .toggle-label { background-color: #ef4444; }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden">
@@ -20,32 +17,30 @@
         </div>
         <nav class="flex-1 p-4 space-y-2">
             <a href="#" class="block px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20">⚙️ General Settings</a>
-            <a href="/server/{{ guild_id }}/audit" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition">🛡️ Security Audit Logs</a>
-            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition mt-8">← Switch Server</a>
+            <a href="/server/{{ guild_id }}/audit" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition">🛡️ Vulnerability Map</a>
+            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition mt-8">← Switch Server</a>
         </nav>
     </aside>
 
     <main class="flex-1 overflow-y-auto p-10 bg-[#0f1115]">
         <div class="max-w-4xl mx-auto">
-            
             <header class="mb-10 flex justify-between items-end">
                 <div>
-                    <h2 class="text-3xl font-bold text-white mb-2">General Settings</h2>
-                    <p class="text-zinc-400">Configure how Sylas behaves and attacks this server.</p>
+                    <h2 class="text-3xl font-bold text-white mb-2">Module Configuration</h2>
+                    <p class="text-zinc-400">Manage how the engine stress tests this guild.</p>
                 </div>
             </header>
 
             <form method="post" action="/server/{{ guild_id }}/update" class="space-y-8">
                 
                 <section class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg">
-                    <h3 class="text-lg font-bold text-white mb-4 border-b border-zinc-800 pb-2">Core Configuration</h3>
+                    <h3 class="text-lg font-bold text-white mb-4 border-b border-zinc-800 pb-2">Core Settings</h3>
                     
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label class="block text-sm font-semibold text-zinc-400 mb-2">Command Prefix</label>
                             <input type="text" name="prefix" value="{{ config.prefix | default('!') }}" 
                                 class="w-full bg-[#0f1115] border border-zinc-700 rounded-lg p-3 text-white focus:outline-none focus:border-red-500 transition">
-                            <p class="text-xs text-zinc-500 mt-2">The prefix used to trigger commands like `!startraid`.</p>
                         </div>
 
                         <div>
@@ -55,28 +50,12 @@
                                     <option value="{{ m }}" {% if m == config.model %}selected{% endif %}>{{ m }}</option>
                                 {% endfor %}
                             </select>
-                            <p class="text-xs text-zinc-500 mt-2">Llama 3 is recommended for filter bypass tests.</p>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg">
-                    <h3 class="text-lg font-bold text-white mb-4 border-b border-zinc-800 pb-2">Red Team Behaviors</h3>
-                    
-                    <div class="flex items-center justify-between p-4 bg-[#0f1115] rounded-lg border border-zinc-800">
-                        <div>
-                            <h4 class="font-bold text-white">Enable Webhook Infiltration</h4>
-                            <p class="text-sm text-zinc-500">Allow Sylas to spawn phantom users for spam testing.</p>
-                        </div>
-                        <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                            <input type="checkbox" name="webhooks_enabled" id="toggle1" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 z-10" checked/>
-                            <label for="toggle1" class="toggle-label block overflow-hidden h-6 rounded-full bg-zinc-600 cursor-pointer transition-colors duration-300"></label>
                         </div>
                     </div>
                 </section>
 
                 <div class="bg-[#181a20] border border-zinc-800 rounded-xl p-6 shadow-lg flex justify-between items-center">
-                    <p class="text-sm text-zinc-400">Unsaved changes will be lost if you leave this page.</p>
+                    <p class="text-sm text-zinc-400 italic">Configuration updates are applied instantly.</p>
                     <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg transition-colors shadow-lg shadow-red-900/20">
                         Save Changes
                     </button>
@@ -85,6 +64,5 @@
             </form>
         </div>
     </main>
-
 </body>
 </html>
