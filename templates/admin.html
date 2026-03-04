@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Sylas | Master Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } </style>
+</head>
+<body class="p-10 max-w-6xl mx-auto">
+    
+    <header class="flex justify-between items-center mb-10 border-b border-zinc-800 pb-6">
+        <div>
+            <h1 class="text-3xl font-black text-red-600 tracking-widest">MASTER CONTROL</h1>
+            <p class="text-zinc-500 font-mono text-sm mt-1">RESTRICTED ACCESS</p>
+        </div>
+        <div class="flex gap-4">
+            <a href="/dashboard" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-bold transition">Exit to App</a>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-4">Engine Status</h3>
+            <div class="flex items-center justify-between">
+                <span class="text-2xl font-black {% if bot_active %}text-emerald-500{% else %}text-red-600{% endif %}">
+                    {% if bot_active %}ONLINE{% else %}OFFLINE{% endif %}
+                </span>
+                <form method="post" action="/admin/toggle_bot">
+                    <button class="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold text-white transition">Toggle Power</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-4">AWS AI Connection</h3>
+            <div class="flex items-center justify-between">
+                <span class="text-2xl font-black {% if ollama_status == 'ONLINE' %}text-emerald-500{% else %}text-red-600{% endif %}">
+                    {{ ollama_status }}
+                </span>
+                <form method="post" action="/admin/force_harvest">
+                    <button type="submit" onclick="this.innerHTML='Pinging AI...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-bold text-white transition">Force Generation</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-[#0f1115] border border-zinc-800 p-8 rounded-xl shadow-2xl">
+        <h3 class="text-2xl font-bold text-white mb-6 border-b border-zinc-800 pb-2">Classified Armory Database</h3>
+        {% if payloads %}
+            <div class="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+            {% for p in payloads %}
+                <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg flex justify-between items-center gap-4">
+                    <div class="flex-1">
+                        <span class="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded font-bold uppercase">{{ p.raid_type }}</span>
+                        <span class="text-red-500 font-bold ml-2">{{ p.username }}</span>
+                        <p class="text-zinc-300 font-mono text-sm mt-2">"{{ p.spam_message }}"</p>
+                    </div>
+                    <form method="post" action="/admin/delete_payload/{{ p._id }}">
+                        <button class="text-red-500 hover:bg-red-900/30 px-4 py-2 rounded text-sm font-bold transition">Delete</button>
+                    </form>
+                </div>
+            {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-zinc-500 italic">Database is empty.</p>
+        {% endif %}
+    </div>
+
+</body>
+</html>
