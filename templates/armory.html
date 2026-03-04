@@ -27,7 +27,7 @@
                     <p class="text-zinc-400 text-lg">Your background Harvester is constantly analyzing threats and generating new social engineering payloads.</p>
                 </div>
                 <form method="post" action="/armory/force_harvest">
-                    <button type="submit" onclick="this.innerHTML='Generating (Takes 30s)...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl transition shadow-lg shadow-purple-900/30 whitespace-nowrap">
+                    <button type="submit" onclick="this.innerHTML='Generating (Takes 30-60s)...'; this.classList.add('opacity-50', 'cursor-not-allowed');" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl transition shadow-lg shadow-purple-900/30 whitespace-nowrap">
                         ⚡ Force AI Generation
                     </button>
                 </form>
@@ -54,7 +54,7 @@
                 {% else %}
                     <div class="bg-zinc-900/50 border border-zinc-800 p-10 rounded-xl text-center">
                         <h3 class="text-2xl font-bold text-zinc-500 mb-2">Armory is Empty</h3>
-                        <p class="text-zinc-600">Click "Force AI Generation" above to manually wake up your AWS VM and generate payloads.</p>
+                        <p class="text-zinc-600">Click "Force AI Generation" above to manually wake up your AWS VM and generate payloads in the background.</p>
                     </div>
                 {% endif %}
             </div>
