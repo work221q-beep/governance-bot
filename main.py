@@ -94,7 +94,7 @@ async def admin_panel(request: Request, key: str = None):
     vulns = await vuln_state.find().sort("last_tested", -1).to_list(50)
     configs = await server_configs.find().to_list(50)
     
-    # 🐛 THE FIX: Convert ObjectIds AND DateTimes to strings so Jinja can render the JSON safely
+    # Convert ObjectIds AND DateTimes to strings so Jinja can render the JSON safely
     for v in vulns: 
         v["_id"] = str(v["_id"])
         if "last_tested" in v and isinstance(v["last_tested"], datetime.datetime):
@@ -131,4 +131,107 @@ async def admin_delete_payload(request: Request, payload_id: str):
 async def admin_purge_armory(request: Request):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     await payload_armory.delete_many({})
-    return RedirectResponse("/admin
+    return RedirectResponse("/admin?tab=armory", status_code=303)
+
+# 🗄️ RAW DATABASE EXPLORER ENDPOINTS
+@app.post("/admin/db/delete/{collection}/{doc_id}")
+async def admin_db_delete(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    if collection == "vulns": await vuln_state.delete_one({"_id": ObjectId(doc_id)})
+    elif collection == "configs": await server_configs.delete_one({"_id": ObjectId(doc_id)})
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/db/edit/{collection}/{doc_id}")
+async def admin_db_edit(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form_data = await request.form()
+    raw_json = form_data.get("raw_json")
+    try:
+        parsed = json.loads(raw_json)
+        parsed.pop("_id", None) 
+        if collection == "vulns": await vuln_state.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
+        elif collection == "configs": await server_configs.update_one({"_id": ObjectId(doc_id)}, {"$set": parsed})
+    except Exception as e:
+        print(f"Failed to save DB Edit: {e}")
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+# ==========================================
+# 🛡️ LIVE SYNC & PERMISSION MANAGER
+# ==========================================
+@app.get("/server/{guild_id}")
+async def server_panel(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    guild = bot.get_guild(int(guild_id))
+    roles = []
+    if guild:
+        for r in reversed(guild.roles): 
+            current_perms = [perm[0] for perm in r.permissions if perm[1] is True]
+            roles.append({"id": str(r.id), "name": r.name, "color": str(r.color) if r.color.value != 0 else None, "current": current_perms, "is_everyone": r.name == "@everyone", "is_bot": r.managed})
+    return templates.TemplateResponse("server.html", {"request": request, "guild_id": guild_id, "roles": roles, "bot_in_server": bool(guild)})
+
+@app.post("/server/{guild_id}/sync")
+async def sync_server_permissions(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    session_user = serializer.loads(user_cookie)
+    web_username = session_user.get("username")
+    form_data = await request.form()
+    guild = bot.get_guild(int(guild_id))
+    if guild:
+        for r in guild.roles:
+            selected_perms = form_data.getlist(f"perms_{r.id}")
+            all_discord_perms = [p[0] for p in discord.Permissions()]
+            new_kwargs = {perm: (perm in selected_perms) for perm in all_discord_perms}
+            try: await r.edit(permissions=discord.Permissions(**new_kwargs), reason=f"Sylas Web Sync (By {web_username})")
+            except discord.Forbidden: pass
+    return RedirectResponse(f"/server/{guild_id}", status_code=303)
+
+@app.get("/server/{guild_id}/permissions")
+async def permissions_manager(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    guild = bot.get_guild(int(guild_id))
+    roles, users, bots, channels = [], [], [], []
+    if guild:
+        roles = [{"id": str(r.id), "name": r.name, "color": str(r.color) if r.color.value != 0 else None} for r in reversed(guild.roles)]
+        for m in guild.members[:500]:
+            member_data = {"id": str(m.id), "name": m.display_name, "avatar": m.display_avatar.url if m.display_avatar else None}
+            if m.bot: bots.append(member_data)
+            else: users.append(member_data)
+        for c in guild.channels:
+            channels.append({"id": str(c.id), "name": c.name, "type": str(c.type)})
+    return templates.TemplateResponse("permissions.html", {"request": request, "guild_id": guild_id, "roles": roles, "users": users, "bots": bots, "channels": channels, "guild_name": guild.name if guild else "Unknown"})
+
+@app.post("/server/{guild_id}/action/{action}/{target_id}")
+async def mod_action(request: Request, guild_id: str, action: str, target_id: str, tab: str = "users"):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/")
+    session_user = serializer.loads(user_cookie)
+    web_username = session_user.get("username")
+    form_data = await request.form()
+    reason = form_data.get("reason", "No reason provided")
+    full_reason = f"{reason} (via Web Admin: {web_username})"
+    guild = bot.get_guild(int(guild_id))
+    msg = "❌ Action failed: Guild not found."
+    if guild:
+        target = guild.get_member(int(target_id))
+        if target:
+            if guild.me.top_role <= target.top_role:
+                msg = f"❌ Action blocked: The Sylas Bot role is lower than {target.name}'s role. Move my role higher!"
+            else:
+                try:
+                    if action == "kick": 
+                        await target.kick(reason=full_reason)
+                        msg = f"✅ Kicked {target.name}. Reason: {reason}"
+                    elif action == "ban": 
+                        await target.ban(reason=full_reason)
+                        msg = f"✅ Banned {target.name}. Reason: {reason}"
+                    elif action == "timeout": 
+                        await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=full_reason)
+                        msg = f"✅ Timed out {target.name} for 10 minutes. Reason: {reason}"
+                except discord.Forbidden: msg = "❌ Action blocked: I lack Discord permissions."
+                except Exception as e: msg = f"❌ Internal Error: {str(e)}"
+        else: msg = "❌ User not found in server."
+    safe_msg = urllib.parse.quote(msg)
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&msg={safe_msg}", status_code=303)
