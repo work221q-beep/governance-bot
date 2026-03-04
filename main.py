@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 from datetime import datetime
 from bot import start_bot
-from db import init_indexes, server_configs, audit_logs
+from db import init_indexes, server_configs, vuln_state
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -31,7 +31,6 @@ async def home(request: Request):
 
 @app.get("/invite")
 async def invite_bot():
-    """Route to add the bot to a new server, just like MEE6."""
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
     return RedirectResponse(url)
 
@@ -91,12 +90,13 @@ async def server_audit(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/")
     
-    logs = await audit_logs.find({"server_id": guild_id}).sort("timestamp", -1).limit(50).to_list(50)
+    # We now fetch the MAP, not a list of logs
+    vulns = await vuln_state.find({"server_id": guild_id}).to_list(100)
     
-    total_tests = len(logs)
-    passed_tests = sum(1 for log in logs if log["status"] == "PASS")
-    security_score = int((passed_tests / total_tests) * 100) if total_tests > 0 else 100
+    total_tests = len(vulns)
+    secure_tests = sum(1 for v in vulns if v["status"] == "SECURE")
+    security_score = int((secure_tests / total_tests) * 100) if total_tests > 0 else 100
 
     return templates.TemplateResponse("leaderboard.html", {
-        "request": request, "guild_id": guild_id, "logs": logs, "score": security_score
+        "request": request, "guild_id": guild_id, "vulns": vulns, "score": security_score
     })
