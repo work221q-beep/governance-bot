@@ -1,158 +1,84 @@
-import discord
-import aiohttp
-import time
-import os
-from discord.ext import commands
-from utils.checks import is_mod
-from utils.ai_rate import ai_rate_limited, ai_lock
+import os, httpx, asyncio, json, re
+from datetime import datetime
+from db import payload_armory
 
-# Grab the OpenRouter key instead of OLLAMA_URL
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+MAX_PAYLOADS = 25 # 25 Ping + 25 Phishing = 50 Total
 
-class AI(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.guild_last_ai = {}
+async def harvest_payloads(raid_type: str = "phishing"):
+    current_count = await payload_armory.count_documents({"raid_type": raid_type})
+    if current_count >= MAX_PAYLOADS: return 0
 
-    @commands.command()
-    @is_mod()
-    async def analyze(self, ctx, *args):
-        if ai_rate_limited(ctx.author.id):
-            await ctx.send("⏳ AI cooldown active.")
-            return
+    prompt = f"Generate a JSON array of 3 realistic Discord {raid_type} scam messages. Output strictly a valid JSON array of objects with keys 'username' and 'spam_message'. No markdown, no extra text."
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "HTTP-Referer": "https://sylas.onrender.com", 
+                    "X-Title": "Sylas"
+                },
+                json={
+                    "model": "nvidia/nemotron-3-nano-30b-a3b:free", 
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+            response.raise_for_status()
+            raw = response.json()['choices'][0]['message']['content'].strip()
+            
+            json_match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if not json_match: json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+            
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+                payloads = parsed if isinstance(parsed, list) else list(parsed.values())[0] if isinstance(parsed, dict) else []
+                            
+                inserts = []
+                for p in payloads:
+                    if isinstance(p, dict) and "username" in p and "spam_message" in p:
+                        inserts.append({
+                            "username": str(p["username"])[:30],
+                            "spam_message": str(p["spam_message"]),
+                            "raid_type": raid_type,
+                            "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+                            "created_at": datetime.utcnow()
+                        })
+                
+                if inserts:
+                    await payload_armory.insert_many(inserts)
+                    print(f"⚡ Harvester generated {len(inserts)} {raid_type} payloads.")
+                    
+                    new_count = await payload_armory.count_documents({"raid_type": raid_type})
+                    if new_count > MAX_PAYLOADS:
+                        to_delete = new_count - MAX_PAYLOADS
+                        oldest = await payload_armory.find({"raid_type": raid_type}).sort("created_at", 1).limit(to_delete).to_list(to_delete)
+                        for doc in oldest: await payload_armory.delete_one({"_id": doc["_id"]})
+                        
+                    return len(inserts)
+    except Exception as e:
+        print(f"🚨 AI Timeout/Error: {e}")
+    return 0
 
-        if ai_lock.locked():
-            await ctx.send("⛔ AI is currently analyzing another request.")
-            return
+async def harvest_loop():
+    await asyncio.sleep(5) 
+    while True:
+        try:
+            for raid_type in ["phishing", "ping"]:
+                if await payload_armory.count_documents({"raid_type": raid_type}) < MAX_PAYLOADS:
+                    await harvest_payloads(raid_type)
+        except Exception: pass
+        await asyncio.sleep(15) 
 
-        GUILD_COOLDOWN = 15
-        now = time.time()
-
-        if ctx.guild.id in self.guild_last_ai:
-            if now - self.guild_last_ai[ctx.guild.id] < GUILD_COOLDOWN:
-                await ctx.send("⏳ Server AI cooldown active.")
-                return
-
-        self.guild_last_ai[ctx.guild.id] = now
-
-        target = None
-        limit = 30
-
-        for arg in args:
-            if arg.isdigit():
-                limit = min(int(arg), 50)
-            else:
-                try:
-                    target = await commands.MemberConverter().convert(ctx, arg)
-                except:
-                    pass
-
-        messages = []
-
-        async for msg in ctx.channel.history(limit=limit):
-            if msg.author.bot:
-                continue
-            if target and msg.author != target:
-                continue
-            if not msg.content.strip():
-                continue
-
-            messages.append(f"{msg.author}: {msg.content}")
-
-        if len(messages) < 2:
-            await ctx.send("ℹ️ Not enough messages to analyze.")
-            return
-
-        messages.reverse()
-        transcript = "\n".join(messages)
-
-        MAX_CHARS = 3500
-        if len(transcript) > MAX_CHARS:
-            transcript = transcript[-MAX_CHARS:]
-
-        prompt = f"""
-You are a strict Discord moderation AI.
-
-Be concise.
-If no violations are found, respond with:
-NO VIOLATIONS DETECTED
-
-Analyze this conversation:
-
-{transcript}
-
-Return:
-- Violations (quote exact message)
-- Who said it
-- Risk level (LOW/MEDIUM/HIGH)
-- Short summary
-- Recommended action
-"""
-
-        status_msg = await ctx.send("🧠 AI analyzing with NVIDIA Nemotron...")
-
-        async def run_ai():
-            async with ai_lock:
-                if not OPENROUTER_API_KEY:
-                    await ctx.send("⚠️ API Key missing. Cannot contact OpenRouter.")
-                    return
-
-                try:
-                    # OpenRouter Endpoint
-                    endpoint = "https://openrouter.ai/api/v1/chat/completions"
-                    timeout = aiohttp.ClientTimeout(total=40)
-
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.post(
-                            endpoint,
-                            headers={
-                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                                "HTTP-Referer": "https://sylas-engine.onrender.com",
-                                "X-Title": "Sylas Red Team Engine"
-                            },
-                            json={
-                                "model": "nvidia/nemotron-3-nano-30b-a3b:free",
-                                "messages": [{"role": "user", "content": prompt}],
-                                "temperature": 0.1,
-                                "max_tokens": 150 # Replaced num_predict with max_tokens
-                            }
-                        ) as resp:
-
-                            if resp.status != 200:
-                                error_text = await resp.text()
-                                print(f"OpenRouter Error: {error_text}")
-                                await ctx.send(f"⚠️ OpenRouter AI error {resp.status}")
-                                return
-
-                            data = await resp.json()
-                            # Standard OpenRouter extraction
-                            result = data['choices'][0]['message']['content'].strip()
-
-                except Exception as e:
-                    print(f"AI Request Exception: {e}")
-                    await ctx.send("⚠️ AI request failed to connect.")
-                    return
-
-                if not result:
-                    await ctx.send("⚠️ AI returned empty response.")
-                    return
-
-                if result.upper().startswith("NO VIOLATIONS"):
-                    report = "✅ **No violations detected in analyzed messages.**"
-                else:
-                    report = f"🧠 **NVIDIA AI Moderation Report**\n\n{result}"
-
-                if len(report) > 1900:
-                    report = report[:1900] + "\n\n[Truncated]"
-
-                try:
-                    await status_msg.delete()
-                except:
-                    pass
-
-                await ctx.send(report)
-
-        self.bot.loop.create_task(run_ai())
-
-async def setup(bot):
-    await bot.add_cog(AI(bot))
+async def get_preloaded_payloads(intensity: int, raid_type: str = "phishing"):
+    cursor = payload_armory.aggregate([
+        {"$match": {"raid_type": raid_type}},
+        {"$sample": {"size": intensity}}
+    ])
+    payloads = await cursor.to_list(length=intensity)
+    
+    if len(payloads) < intensity:
+        if raid_type == "ping": return [{"username": "System", "spam_message": "🚨 @everyone CRITICAL ALERT: Verify your account! https://fake-verify.com", "_id": None}] * intensity
+        return [{"username": "Ghost", "spam_message": "Free Nitro Drop: https://fake-nitro.com", "_id": None}] * intensity
+    return payloads
