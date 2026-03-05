@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Sylas | Premium Upgrade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col z-20">
+        <div class="p-6 border-b border-zinc-800">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-red-600">.AI</span></h1>
+            <p class="text-xs text-zinc-500 mt-1 uppercase tracking-widest">{{ guild_name }}</p>
+        </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="/server/{{ guild_id }}/permissions" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition">👥 Security Editor</a>
+            <a href="#" class="block px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20">💎 Alpha Premium</a>
+            <a href="/dashboard" class="block px-4 py-3 rounded-lg text-zinc-400 hover:bg-zinc-800 transition mt-8">← Global Servers</a>
+        </nav>
+    </aside>
+
+    <main class="flex-1 overflow-y-auto p-10 relative">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[300px] bg-red-900/20 blur-[120px] rounded-full pointer-events-none"></div>
+
+        <div class="max-w-5xl mx-auto relative z-10">
+            <header class="text-center mb-16 mt-8">
+                {% if has_premium %}
+                <div class="inline-block bg-emerald-900/30 border border-emerald-500 text-emerald-400 px-6 py-2 rounded-full font-bold mb-6 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                    💎 Premium Active for this Server
+                </div>
+                <h2 class="text-5xl font-black text-white mb-4 tracking-tight">Your Server is Protected.</h2>
+                <p class="text-zinc-400 text-lg max-w-2xl mx-auto">You currently have full access to all Advanced Wargames and reduced cooldowns.</p>
+                {% else %}
+                <div class="inline-block bg-zinc-800 border border-zinc-700 text-zinc-300 px-6 py-2 rounded-full font-bold mb-6">
+                    Current Plan: Standard (Free)
+                </div>
+                <h2 class="text-5xl font-black text-white mb-4 tracking-tight">Upgrade to <span class="text-red-500">Alpha Tester</span></h2>
+                <p class="text-zinc-400 text-lg max-w-2xl mx-auto">Unlock advanced social engineering protocols, drastically reduced cooldowns, and full database access for <strong>{{ guild_name }}</strong>.</p>
+                {% endif %}
+            </header>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                
+                <div class="bg-[#0a0a0c] border border-zinc-800 rounded-2xl p-8 hover:border-zinc-600 transition duration-300 relative overflow-hidden group">
+                    <h3 class="text-xl font-bold text-white mb-2">Alpha Weekly</h3>
+                    <p class="text-zinc-500 text-sm mb-6">Perfect for temporary stress-testing.</p>
+                    <div class="mb-8">
+                        <span class="text-5xl font-black text-white">$5</span>
+                        <span class="text-zinc-500">/ 7 days</span>
+                    </div>
+                    
+                    <ul class="space-y-4 mb-8 text-sm font-medium text-zinc-300">
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> All 6 Wargame Modules Unlocked</li>
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> Fake Moderator & Insider Threat</li>
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> 4-Hour Rapid Cooldowns (Down from 24h)</li>
+                    </ul>
+                    
+                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-4 rounded-xl transition">
+                        Purchase License
+                    </button>
+                </div>
+
+                <div class="bg-[#141519] border border-red-900 rounded-2xl p-8 transform md:-translate-y-4 shadow-[0_0_40px_rgba(220,38,38,0.1)] relative overflow-hidden">
+                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-red-600 to-red-900"></div>
+                    <div class="absolute top-6 right-6 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full">Most Popular</div>
+                    
+                    <h3 class="text-xl font-bold text-white mb-2">Alpha Monthly</h3>
+                    <p class="text-zinc-500 text-sm mb-6">Continuous security training for active guilds.</p>
+                    <div class="mb-8">
+                        <span class="text-5xl font-black text-white">$17.99</span>
+                        <span class="text-zinc-500">/ 30 days</span>
+                    </div>
+                    
+                    <ul class="space-y-4 mb-8 text-sm font-medium text-zinc-300">
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> All 6 Wargame Modules Unlocked</li>
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> Fake Moderator & Insider Threat</li>
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> 4-Hour Rapid Cooldowns</li>
+                        <li class="flex items-center gap-3"><span class="text-red-500">✓</span> Priority AI Generation Queue</li>
+                    </ul>
+                    
+                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-xl transition shadow-[0_0_15px_rgba(220,38,38,0.3)]">
+                        Purchase License
+                    </button>
+                </div>
+
+            </div>
+
+            <div class="text-center mt-12">
+                <p class="text-zinc-600 font-bold uppercase tracking-widest text-sm">Yearly Enterprise Plan — Coming Soon</p>
+            </div>
+        </div>
+    </main>
+
+</body>
+</html>
