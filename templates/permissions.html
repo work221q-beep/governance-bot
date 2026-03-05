@@ -45,7 +45,16 @@
         function openModModal(action, targetId, targetName) {
             let actionCap = action.charAt(0).toUpperCase() + action.slice(1);
             document.getElementById('mod-modal-title').innerText = `${actionCap} User: ${targetName}`;
-            document.getElementById('mod-form-action-text').innerText = `You are about to ${action} ${targetName}. They will receive a DM from the bot with the reason below before the action executes.`;
+            document.getElementById('mod-form-action-text').innerText = `You are about to ${action} ${targetName}. They will receive a DM from the bot.`;
+            
+            // Dynamic UI: Show Duration Dropdown only if Timeout is selected
+            let durationContainer = document.getElementById('timeout-duration-container');
+            if (action === 'timeout') {
+                durationContainer.classList.remove('hidden');
+            } else {
+                durationContainer.classList.add('hidden');
+            }
+
             document.getElementById('mod-modal').classList.remove('hidden');
             document.getElementById('mod-form').action = `/server/{{ guild_id }}/action/${action}/${targetId}`;
         }
@@ -172,12 +181,30 @@
             <h3 id="mod-modal-title" class="text-2xl font-bold text-red-500 mb-2">Execute Action</h3>
             <p id="mod-form-action-text" class="text-zinc-400 text-sm mb-6"></p>
             
-            <form id="mod-form" method="post" class="space-y-4">
+            <form id="mod-form" method="post" class="space-y-5">
+                
+                <div id="timeout-duration-container" class="hidden">
+                    <label class="block text-zinc-300 text-sm font-bold mb-2">Duration</label>
+                    <select name="duration" class="w-full bg-[#0f1115] border border-zinc-700 text-white p-3 rounded-lg focus:outline-none focus:border-red-500">
+                        <option value="5">5 Minutes</option>
+                        <option value="10" selected>10 Minutes</option>
+                        <option value="60">1 Hour</option>
+                        <option value="1440">1 Day</option>
+                        <option value="10080">1 Week</option>
+                    </select>
+                </div>
+
                 <div>
                     <label class="block text-zinc-300 text-sm font-bold mb-2">Message to User (DM)</label>
                     <textarea name="reason" rows="3" class="w-full bg-[#0f1115] border border-zinc-700 text-white p-3 rounded-lg focus:outline-none focus:border-red-500" placeholder="State the reason for this action..." required></textarea>
                 </div>
-                <div class="flex justify-end gap-4 mt-4">
+
+                <div class="flex items-center gap-3 bg-[#0f1115] p-4 rounded-lg border border-zinc-800">
+                    <input type="checkbox" id="include_name" name="include_name" checked class="w-5 h-5 accent-red-600 cursor-pointer">
+                    <label for="include_name" class="text-sm text-zinc-300 cursor-pointer select-none">Show my Admin Username in the DM</label>
+                </div>
+
+                <div class="flex justify-end gap-4 mt-6">
                     <button type="button" onclick="closeModModal()" class="px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Cancel</button>
                     <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold px-8 py-2 rounded-lg transition">Confirm & DM</button>
                 </div>
