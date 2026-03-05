@@ -50,27 +50,22 @@ class RaidView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    print(f"👻 Sylas Ghost Engine is online.")
+    await bot.tree.sync() # Registers the new slash commands with Discord
+    print(f"👻 Sylas Ghost Engine is online and slash commands synced.")
 
-@bot.command(name="startraid")
-@commands.has_permissions(administrator=True)
-async def start_raid(ctx):
+@bot.tree.command(name="startraid", description="Deploy a Red Team Wargame in this channel")
+@discord.app_commands.default_permissions(administrator=True)
+async def start_raid(interaction: discord.Interaction):
     if not engine_state["active"]:
-        msg = await ctx.send("❌ **Engine Offline.** Contact the Bot Administrator.", delete_after=5.0)
-        await asyncio.sleep(5)
-        try: await ctx.message.delete()
-        except: pass
+        await interaction.response.send_message("❌ **Engine Offline.** Contact the Bot Administrator.", ephemeral=True)
         return
 
     # BUG 1 FIX: Enforce 1 Wargame per Guild at a time
-    if ctx.guild.id in active_guild_sessions:
-        msg = await ctx.send("❌ **A Wargame is already active in this server.** Finish or cancel it first.", delete_after=5.0)
-        await asyncio.sleep(5)
-        try: await ctx.message.delete()
-        except: pass
+    if interaction.guild.id in active_guild_sessions:
+        await interaction.response.send_message("❌ **A Wargame is already active in this server.** Finish or cancel it first.", ephemeral=True)
         return
 
-    active_guild_sessions.add(ctx.guild.id)
+    active_guild_sessions.add(interaction.guild.id)
 
     embed = discord.Embed(
         title="👻 SYLAS TRAINING ENGINE",
@@ -78,10 +73,50 @@ async def start_raid(ctx):
         color=discord.Color.dark_gray()
     )
     
-    view = RaidView(ctx.message)
-    dropdown_msg = await ctx.send(embed=embed, view=view)
+    # Send message, fetch it to act as our base message for the dropdown
+    await interaction.response.send_message(embed=embed)
+    dropdown_msg = await interaction.original_response()
+    
+    view = RaidView(dropdown_msg)
+    await dropdown_msg.edit(view=view)
     view.message = dropdown_msg
-    pending_dropdowns[dropdown_msg.id] = ctx.message
+    pending_dropdowns[dropdown_msg.id] = dropdown_msg
+
+@bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
+@discord.app_commands.default_permissions(administrator=True)
+async def end_raid(interaction: discord.Interaction):
+    if interaction.guild.id not in active_guild_sessions:
+        await interaction.response.send_message("⚠️ There is no active wargame in this server to cancel.", ephemeral=True)
+        return
+
+    killed_active_game = False
+    
+    # 1. Kill the active wargame loop
+    for game_id, wargame in list(active_wargames.items()):
+        channel = bot.get_channel(wargame["channel_id"])
+        if channel and channel.guild.id == interaction.guild.id:
+            wargame["cancelled"] = True
+            killed_active_game = True
+            
+    # 2. Kill pending dropdown menus (if they haven't selected a game yet)
+    to_remove = []
+    for msg_id, msg in pending_dropdowns.items():
+        if msg.guild.id == interaction.guild.id:
+            to_remove.append(msg_id)
+            try: await msg.delete()
+            except: pass
+            
+    for m_id in to_remove:
+        pending_dropdowns.pop(m_id, None)
+
+    # 3. Free the session lock
+    if interaction.guild.id in active_guild_sessions:
+        active_guild_sessions.remove(interaction.guild.id)
+
+    if killed_active_game:
+        await interaction.response.send_message("🛑 **Wargame Forcefully Terminated.** All active threats disengaged.")
+    else:
+        await interaction.response.send_message("🛑 **Deployment Cancelled.**", ephemeral=True)
 
 async def execute_wargame(interaction: discord.Interaction, raid_type: str, dropdown_msg: discord.Message, original_cmd_msg: discord.Message):
     channel = interaction.channel
@@ -145,7 +180,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             
         wargame = active_wargames.get(game_id)
         
-        # Only process final state if it wasn't cancelled by deletion
+        # Only process final state if it wasn't cancelled by deletion or /endraid
         if wargame and not wargame.get("cancelled"):
             final_embed = discord.Embed(title="✅ WARGAME COMPLETE")
             if wargame["failed"]:
