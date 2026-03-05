@@ -90,15 +90,7 @@ async def permissions_manager(request: Request, guild_id: str):
     guild = bot.get_guild(int(guild_id))
     
     bot_in_guild = True if guild else False
-    
-    guild_name = "Unknown Server"
-    if bot_in_guild:
-        guild_name = guild.name
-    else:
-        for g in session_user.get("guilds", []):
-            if str(g["id"]) == str(guild_id):
-                guild_name = g["name"]
-                break
+    guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
 
     roles, users, bots, channels = [], [], [], []
     
@@ -135,6 +127,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     form_data = await request.form()
     custom_reason = form_data.get("reason", "No reason provided.")
+    include_name = form_data.get("include_name") == "on"
+    timeout_duration = int(form_data.get("duration", 10))
     
     session_user = serializer.loads(user_cookie)
     admin_name = session_user.get('username')
@@ -146,41 +140,48 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     web_member = guild.get_member(int(session_user.get("id")))
     
-    if web_member:
-        if guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
-            return HTMLResponse(
-                f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-                f"<h2 style='color:#ef4444; font-weight: 900;'>Access Denied</h2>"
-                f"<p style='color:#a1a1aa;'>You cannot {action} a user with an equal or higher role.</p>"
-                f"<a href='/server/{guild_id}/permissions' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
-                f"</div>", status_code=403
-            )
+    # 1. Check if Admin has permission over target
+    if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
+        return HTMLResponse(
+            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
+            f"<h2 style='color:#ef4444; font-weight: 900;'>Admin Access Denied</h2>"
+            f"<p>You cannot {action} a user with an equal or higher role.</p>"
+            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
+            
+    # 2. PRE-FLIGHT CHECK: Check if the BOT has permission over target BEFORE sending DM
+    if guild.owner_id == target.id or guild.me.top_role <= target.top_role:
+        return HTMLResponse(
+            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
+            f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
+            f"<p>Sylas cannot {action} <b>{target.name}</b>. The bot's role must be higher than the target's role.</p>"
+            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
             
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
-    dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
+    
+    # Format DM based on toggle
+    if include_name:
+        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
+    else:
+        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}"
 
-    # Attempt to DM the user BEFORE taking action
+    # 3. Attempt to DM the user securely
     if not target.bot:
         try:
             await target.send(dm_message)
         except discord.Forbidden:
-            pass 
+            pass # DMs closed
             
+    # 4. Execute Action safely
     try:
         if action == "kick": 
             await target.kick(reason=audit_log_reason)
         elif action == "ban": 
             await target.ban(reason=audit_log_reason)
         elif action == "timeout": 
-            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=audit_log_reason)
+            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
     except discord.Forbidden:
-        return HTMLResponse(
-            f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-            f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
-            f"<p style='color:#a1a1aa;'>Sylas cannot {action} <b>{target.name}</b> because their role is higher than or equal to the bot's role.</p>"
-            f"<a href='/server/{guild_id}/permissions' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
-            f"</div>", status_code=403
-        )
+        # Fallback for missing standard permissions (e.g., bot lacks "Ban Members" tick)
+        return HTMLResponse("Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.", status_code=403)
             
     tab = "bots" if target.bot else "users"
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
@@ -221,14 +222,12 @@ async def admin_panel(request: Request, key: str = None):
         response = RedirectResponse("/admin")
         response.set_cookie("admin_auth", "true", httponly=True)
         return response
-        
     if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
     
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     db = payload_armory.database
     collection_names = await db.list_collection_names()
     db_structure = {}
-    
     for coll_name in collection_names:
         docs = await db[coll_name].find().sort("_id", -1).to_list(100)
         for d in docs:
