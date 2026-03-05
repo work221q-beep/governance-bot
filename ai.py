@@ -132,8 +132,11 @@ async def harvest_payloads(raid_type: str):
 async def parallel_harvest_sweep():
     sem = asyncio.Semaphore(4) # Protect rate limits
     async def safe_harvest(r_type):
-        async with sem: await harvest_payloads(r_type)
-    
+        try:
+            async with sem: await harvest_payloads(r_type)
+        except Exception as e:
+            print(f"🚨 Background Harvest Error on {r_type}: {e}")
+            
     tasks = [safe_harvest(r_type) for r_type, cap in CAPS.items() 
              if await payload_armory.count_documents({"raid_type": r_type}) < cap]
     if tasks: await asyncio.gather(*tasks, return_exceptions=True)
@@ -148,6 +151,13 @@ async def harvest_loop():
 async def get_preloaded_payloads(intensity: int, raid_type: str):
     cursor = payload_armory.aggregate([{"$match": {"raid_type": raid_type}}, {"$sample": {"size": intensity}}])
     payloads = await cursor.to_list(length=intensity)
-    if len(payloads) < intensity:
-        return [{"username": "Ghost", "spam_message": "Threat payload missing from DB.", "_id": None}] * intensity
+    
+    # DB Resilience BUG 2 FIX: Pad missing elements instead of wiping the entire array
+    while len(payloads) < intensity:
+        payloads.append({
+            "username": f"User_{random.randint(100,999)}", 
+            "spam_message": f"[Fallback Payload] DB depleted for '{raid_type}'.", 
+            "_id": None
+        })
+        
     return payloads
