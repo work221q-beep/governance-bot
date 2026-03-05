@@ -14,10 +14,14 @@ class RaidSelect(discord.ui.Select):
     def __init__(self, original_cmd_msg):
         self.original_cmd_msg = original_cmd_msg
         options = [
-            discord.SelectOption(label="Phishing Scam Wargame", description="Drops scams + false positives.", emoji="🎣", value="phishing"),
-            discord.SelectOption(label="Fake Mod Wargame", description="Social engineering & false authority.", emoji="🛡️", value="fake_mod")
+            discord.SelectOption(label="Phishing Link Wargame", description="Detect obfuscated URLs vs safe links.", emoji="🎣", value="phishing"),
+            discord.SelectOption(label="Spam Flood Wargame", description="Handle bot floods vs excited users.", emoji="🌊", value="spam_flood"),
+            discord.SelectOption(label="Fake Moderator Wargame", description="Verify authority & social engineering.", emoji="🛡️", value="fake_mod"),
+            discord.SelectOption(label="Insider Threat Wargame", description="Trusted users turning rogue.", emoji="🕵️", value="insider_threat"),
+            discord.SelectOption(label="Escalation Conflict", description="Judge proportional response in arguments.", emoji="🤬", value="escalation"),
+            discord.SelectOption(label="Coordinated Harassment", description="Identify and stop targeted brigading.", emoji="🎯", value="harassment")
         ]
-        super().__init__(placeholder="Select a Wargame Protocol...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Select a Training Protocol...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         pending_dropdowns.pop(interaction.message.id, None)
@@ -54,8 +58,8 @@ async def start_raid(ctx):
         return
 
     embed = discord.Embed(
-        title="👻 SYLAS WARGAME ENGINE",
-        description="**Select a Wargame to deploy.**\n\nDeployment drops 3 AI threats and 2 AI innocent messages. Mods have **60 seconds** to delete the threats. Deleting an innocent message results in immediate failure.",
+        title="👻 SYLAS TRAINING ENGINE",
+        description="**Select a Wargame to deploy.**\n\nDeployment drops 3 AI threats and 2 contextual false positives. Mods have **60 seconds** to delete the threats. Deleting an innocent message results in immediate failure.",
         color=discord.Color.dark_gray()
     )
     
@@ -66,21 +70,21 @@ async def start_raid(ctx):
 
 async def execute_wargame(interaction: discord.Interaction, raid_type: str, dropdown_msg: discord.Message, original_cmd_msg: discord.Message):
     channel = interaction.channel
-    status_embed = discord.Embed(title="⚡ Wargame Active", description="Injecting threats and false positives into channel...", color=discord.Color.dark_purple())
+    status_embed = discord.Embed(title="⚡ Wargame Active", description="Injecting threats and contextual false positives...", color=discord.Color.dark_purple())
     status_msg = await channel.send(embed=status_embed)
     
     artifacts = []
     spawned_msgs = []
     game_id = str(interaction.id)
     
-    # Generate Payload Mix via Database
+    # Generate Payload Mix via Database (Pulls contextual innocents!)
     scams = await get_preloaded_payloads(3, raid_type)
-    innocents = await get_preloaded_payloads(2, "innocent")
+    innocents = await get_preloaded_payloads(2, f"innocent_{raid_type}")
     
     for s in scams: s["is_malicious"] = True
     for i in innocents: i["is_malicious"] = False
         
-    # 🔥 BURN AFTER READING PROTOCOL (Now affects Innocents too)
+    # 🔥 BURN AFTER READING PROTOCOL
     used_ids = [doc["_id"] for doc in scams + innocents if doc.get("_id")]
     if used_ids: await payload_armory.delete_many({"_id": {"$in": used_ids}})
     
@@ -163,10 +167,10 @@ async def on_message_delete(message):
                 if not is_malicious:
                     wargame["failed"] = True
                     embed.color = discord.Color.red()
-                    embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted an innocent message at **{time_alive:.1f}s**!", inline=False)
+                    embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted a contextual false positive at **{time_alive:.1f}s**!", inline=False)
                 else:
                     wargame["scams_left"] -= 1
-                    embed.add_field(name="🛡️ Threat Neutralized", value=f"Scam deleted in **{time_alive:.1f}s**.", inline=False)
+                    embed.add_field(name="🛡️ Threat Neutralized", value=f"Payload deleted in **{time_alive:.1f}s**.", inline=False)
                 
                 await status_msg.edit(embed=embed)
             except Exception as e: pass
