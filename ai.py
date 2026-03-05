@@ -2,7 +2,7 @@ import os, httpx, asyncio, json, re
 from datetime import datetime
 from db import payload_armory
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MAX_PAYLOADS = 25 # 25 Ping + 25 Phishing = 50 Total
 
 async def harvest_payloads(raid_type: str = "phishing"):
@@ -14,11 +14,22 @@ async def harvest_payloads(raid_type: str = "phishing"):
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": "llama3", "prompt": prompt, "stream": False, "format": "json"}
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ]
+                }
             )
             response.raise_for_status()
-            raw = response.json().get("response", "").strip()
+            
+            # Extract content using OpenAI/OpenRouter standard schema
+            raw = response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             
             json_match = re.search(r'\[.*\]', raw, re.DOTALL)
             if not json_match: json_match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -34,7 +45,7 @@ async def harvest_payloads(raid_type: str = "phishing"):
                             "username": str(p["username"])[:30],
                             "spam_message": str(p["spam_message"]),
                             "raid_type": raid_type,
-                            "model": "llama3",
+                            "model": "nemotron-3-nano",
                             "created_at": datetime.utcnow()
                         })
                 
