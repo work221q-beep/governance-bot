@@ -16,7 +16,6 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID", "YOUR_DISCORD_ID_HERE")
 
 @app.on_event("startup")
@@ -140,7 +139,6 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     web_member = guild.get_member(int(session_user.get("id")))
     
-    # 1. Check if Admin has permission over target
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
         return HTMLResponse(
             f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
@@ -148,7 +146,6 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
             f"<p>You cannot {action} a user with an equal or higher role.</p>"
             f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
             
-    # 2. PRE-FLIGHT CHECK: Check if the BOT has permission over target BEFORE sending DM
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role:
         return HTMLResponse(
             f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
@@ -158,20 +155,17 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
             
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     
-    # Format DM based on toggle
     if include_name:
         dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
     else:
         dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}"
 
-    # 3. Attempt to DM the user securely
     if not target.bot:
         try:
             await target.send(dm_message)
         except discord.Forbidden:
-            pass # DMs closed
+            pass
             
-    # 4. Execute Action safely
     try:
         if action == "kick": 
             await target.kick(reason=audit_log_reason)
@@ -180,7 +174,6 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         elif action == "timeout": 
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
     except discord.Forbidden:
-        # Fallback for missing standard permissions (e.g., bot lacks "Ban Members" tick)
         return HTMLResponse("Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.", status_code=403)
             
     tab = "bots" if target.bot else "users"
@@ -238,7 +231,7 @@ async def admin_panel(request: Request, key: str = None):
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "ollama_status": "ONLINE", "db_structure": db_structure
+        "ai_status": "ONLINE", "db_structure": db_structure
     })
 
 @app.post("/admin/toggle_bot")
