@@ -10,30 +10,12 @@ engine_state = {"active": True}
 active_wargames = {}
 pending_dropdowns = {} 
 
-INNOCENT_POOL = [
-    "Did anyone see the new patch notes? Looks sick.",
-    "I'm going to grab food, be back in 10 mins.",
-    "Can someone help me with the latest quest?",
-    "Wow, the server is really active today.",
-    "Just got a new PC setup, finally hitting 144fps!",
-    "Anyone down for some ranked matches tonight?",
-    "That last game was insane...",
-    "Where do I submit my application for the clan?",
-    "Good morning everyone! Have a great day.",
-    "Is the voice channel lagging for anyone else?",
-    "I think Discord's API is acting up again.",
-    "Brb, my dog is barking at the mailman.",
-    "Does anyone know what time the event starts?",
-    "Finally finished my exams! Time to grind.",
-    "Who's streaming right now? I need something to watch."
-]
-
 class RaidSelect(discord.ui.Select):
     def __init__(self, original_cmd_msg):
         self.original_cmd_msg = original_cmd_msg
         options = [
             discord.SelectOption(label="Phishing Scam Wargame", description="Drops scams + false positives.", emoji="🎣", value="phishing"),
-            discord.SelectOption(label="Mass Ping Wargame", description="Drops urgent pings + normal messages.", emoji="🔔", value="ping")
+            discord.SelectOption(label="Fake Mod Wargame", description="Social engineering & false authority.", emoji="🛡️", value="fake_mod")
         ]
         super().__init__(placeholder="Select a Wargame Protocol...", min_values=1, max_values=1, options=options)
 
@@ -73,7 +55,7 @@ async def start_raid(ctx):
 
     embed = discord.Embed(
         title="👻 SYLAS WARGAME ENGINE",
-        description="**Select a Wargame to deploy.**\n\nDeployment drops 3 AI threats and 2 innocent messages. Mods have **60 seconds** to delete the threats. Deleting an innocent message results in immediate failure.",
+        description="**Select a Wargame to deploy.**\n\nDeployment drops 3 AI threats and 2 AI innocent messages. Mods have **60 seconds** to delete the threats. Deleting an innocent message results in immediate failure.",
         color=discord.Color.dark_gray()
     )
     
@@ -91,18 +73,16 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     spawned_msgs = []
     game_id = str(interaction.id)
     
+    # Generate Payload Mix via Database
     scams = await get_preloaded_payloads(3, raid_type)
+    innocents = await get_preloaded_payloads(2, "innocent")
+    
     for s in scams: s["is_malicious"] = True
+    for i in innocents: i["is_malicious"] = False
         
-    # 🔥 BURN AFTER READING PROTOCOL
-    scam_ids = [s["_id"] for s in scams if s.get("_id")]
-    if scam_ids: await payload_armory.delete_many({"_id": {"$in": scam_ids}})
-        
-    sampled_innocents = random.sample(INNOCENT_POOL, 2)
-    innocents = [
-        {"username": f"User_{random.randint(100,999)}", "spam_message": sampled_innocents[0], "is_malicious": False},
-        {"username": f"Gamer_{random.randint(100,999)}", "spam_message": sampled_innocents[1], "is_malicious": False}
-    ]
+    # 🔥 BURN AFTER READING PROTOCOL (Now affects Innocents too)
+    used_ids = [doc["_id"] for doc in scams + innocents if doc.get("_id")]
+    if used_ids: await payload_armory.delete_many({"_id": {"$in": used_ids}})
     
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
