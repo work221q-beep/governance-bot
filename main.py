@@ -5,13 +5,14 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 from bson import ObjectId
 from bot import start_bot, bot, engine_state
-from ai import harvest_loop, harvest_payloads
+from ai import harvest_loop, harvest_payloads, parallel_harvest_sweep
 from db import init_indexes, payload_armory, vuln_state, server_configs
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 serializer = URLSafeSerializer(os.getenv("SECRET_KEY", "supersecret"))
 
+# Environment Configurations
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
@@ -217,7 +218,7 @@ async def admin_panel(request: Request, key: str = None):
         return response
     if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
     
-    # Sort by raid_type to group them, then by newest (Bumped to 1000 so the UI can display all 450 max payloads)
+    # Sort by raid_type and limit increased to 1000 for the full armory view
     payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
     db = payload_armory.database
     collection_names = await db.list_collection_names()
@@ -243,12 +244,10 @@ async def toggle_bot(request: Request):
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
+    """Triggers the new parallel sweep to populate all modules evenly across providers."""
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     
-    # Dynamically trigger harvesting for all modules based on CAPS dictionary
-    from ai import CAPS
-    for module_name in CAPS.keys():
-        bg_tasks.add_task(harvest_payloads, module_name)
+    bg_tasks.add_task(parallel_harvest_sweep)
         
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
