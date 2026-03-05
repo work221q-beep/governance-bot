@@ -39,8 +39,9 @@ async def login():
 @app.get("/logout")
 async def logout():
     response = RedirectResponse(url="/")
-    response.delete_cookie("session")
-    response.delete_cookie("admin_auth")
+    # Path param is required to guarantee the browser destroys the global cookie
+    response.delete_cookie("session", path="/")
+    response.delete_cookie("admin_auth", path="/")
     return response
 
 @app.get("/invite")
@@ -71,7 +72,9 @@ async def callback(code: str):
 @app.get("/dashboard")
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/")
+    # If not logged in, force the login pipeline as requested
+    if not user_cookie: return RedirectResponse("/login")
+    
     session_user = serializer.loads(user_cookie)
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
@@ -83,7 +86,7 @@ async def redirect_to_permissions(guild_id: str):
 @app.get("/server/{guild_id}/permissions")
 async def permissions_manager(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/")
+    if not user_cookie: return RedirectResponse("/login")
     
     session_user = serializer.loads(user_cookie)
     guild = bot.get_guild(int(guild_id))
@@ -99,7 +102,6 @@ async def permissions_manager(request: Request, guild_id: str):
             })
             
         for m in guild.members:
-            # 🛑 CRITICAL FIX: Safe fallback for users with no profile pictures
             avatar = str(m.display_avatar.url) if m.display_avatar else None
             member_data = {
                 "id": str(m.id), "name": m.name, "display_name": m.display_name,
@@ -119,36 +121,55 @@ async def permissions_manager(request: Request, guild_id: str):
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
-    """Executes moderation with strictly enforced Role Hierarchy checks."""
+    """Executes moderation and handles missing Python datetimes + Role blocks."""
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/")
+    if not user_cookie: return RedirectResponse("/login")
     
     session_user = serializer.loads(user_cookie)
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     target = guild.get_member(int(target_id))
+    if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
     web_member = guild.get_member(int(session_user.get("id")))
     
-    if target and web_member:
-        # Prevent lower roles from moderating higher roles
+    if web_member:
         if guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
-            return HTMLResponse(f"Access Denied: You cannot {action} a user with an equal or higher role.", status_code=403)
+            return HTMLResponse(
+                f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
+                f"<h2 style='color:#ef4444; font-weight: 900;'>Access Denied</h2>"
+                f"<p style='color:#a1a1aa;'>You cannot {action} a user with an equal or higher role.</p>"
+                f"<a href='/server/{guild_id}/permissions' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
+                f"</div>", status_code=403
+            )
             
-        try:
-            if action == "kick": await target.kick(reason=f"Sylas Web Admin ({web_member.name})")
-            elif action == "ban": await target.ban(reason=f"Sylas Web Admin ({web_member.name})")
-            elif action == "timeout": await target.timeout(discord.utils.utcnow() + discord.utils.timedelta(minutes=10), reason=f"Sylas Web Admin ({web_member.name})")
-        except discord.Forbidden:
-            pass # Bot doesn't have permissions
+    try:
+        if action == "kick": 
+            await target.kick(reason=f"Sylas Web Admin ({session_user.get('username')})")
+        elif action == "ban": 
+            await target.ban(reason=f"Sylas Web Admin ({session_user.get('username')})")
+        elif action == "timeout": 
+            # FIXED: Properly uses native datetime to calculate the timedelta
+            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=f"Sylas Web Admin ({session_user.get('username')})")
+    except discord.Forbidden:
+        # VISUAL FALLBACK: Instead of failing silently, alerts the user that their Discord Role order needs fixing
+        return HTMLResponse(
+            f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
+            f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
+            f"<p style='color:#a1a1aa;'>Sylas cannot {action} <b>{target.name}</b> because their role is higher than or equal to the bot's role.</p>"
+            f"<p style='color:#71717a; font-size:12px;'>To fix this, move the Sylas role higher in your Server Settings.</p>"
+            f"<a href='/server/{guild_id}/permissions' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
+            f"</div>", status_code=403
+        )
             
-    return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
+    tab = "bots" if target.bot else "users"
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/override")
 async def channel_override(request: Request, guild_id: str, channel_id: str):
-    """Updates explicit Channel Overrides (Allow/Deny/Inherit) for a specific role."""
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/")
+    if not user_cookie: return RedirectResponse("/login")
     
     form_data = await request.form()
     role_id = form_data.get("role_id")
@@ -161,7 +182,6 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     
     if channel and role:
         overwrite = channel.overwrites_for(role)
-        # Apply the explicit matrix selections
         for perm in ["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
             val = form_data.get(perm)
             if val == "allow": setattr(overwrite, perm, True)
@@ -171,9 +191,15 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
         try:
             await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
         except discord.Forbidden:
-            pass
+            return HTMLResponse(
+                f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
+                f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Permission Error</h2>"
+                f"<p style='color:#a1a1aa;'>Sylas does not have permission to edit channel overrides here.</p>"
+                f"<a href='/server/{guild_id}/permissions?tab=channels' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
+                f"</div>", status_code=403
+            )
             
-    return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
 # --- MASTER ADMIN PANEL ---
 @app.get("/admin")
