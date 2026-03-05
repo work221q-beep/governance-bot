@@ -3,7 +3,7 @@ from datetime import datetime
 from db import payload_armory
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-TARGET_MODEL = "openai/gpt-oss-20b:free"
+TARGET_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
 
 def get_max_limit(raid_type: str) -> int:
     """Returns 50 for innocent payloads, 25 for everything else."""
