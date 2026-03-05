@@ -74,7 +74,7 @@
         <div class="flex justify-between items-center border-b border-zinc-800 pb-4 mb-6">
             <div>
                 <h3 class="text-2xl font-bold text-white">Classified Armory</h3>
-                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }} / 50 Cap</p>
+                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }} / 100 Cap</p>
             </div>
             
             <div class="flex gap-3">
@@ -89,17 +89,27 @@
         </div>
         
         {% if payloads %}
-            <div class="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-            {% for p in payloads %}
-                <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg flex justify-between items-center gap-4">
-                    <div class="flex-1">
-                        <span class="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded font-bold uppercase">{{ p.raid_type }}</span>
-                        <span class="text-red-500 font-bold ml-2">{{ p.username }}</span>
-                        <p class="text-zinc-300 font-mono text-sm mt-2">"{{ p.spam_message }}"</p>
+            <div class="space-y-8 max-h-[500px] overflow-y-auto pr-2">
+            {% for raid_type, type_payloads in payloads|groupby('raid_type') %}
+                <div>
+                    <h4 class="text-white font-bold uppercase tracking-widest text-sm mb-3 border-b border-zinc-800 pb-2 flex justify-between">
+                        <span>{{ raid_type|replace('_', ' ') }} PROTOCOLS</span>
+                        <span class="text-zinc-500 text-xs">{{ type_payloads|length }} Stored</span>
+                    </h4>
+                    <div class="space-y-3">
+                    {% for p in type_payloads %}
+                        <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg flex justify-between items-center gap-4">
+                            <div class="flex-1">
+                                <span class="text-xs {% if p.raid_type == 'innocent' %}bg-emerald-900/30 text-emerald-500{% else %}bg-red-900/30 text-red-500{% endif %} px-2 py-1 rounded font-bold uppercase">{{ p.raid_type }}</span>
+                                <span class="text-zinc-300 font-bold ml-2">{{ p.username }}</span>
+                                <p class="text-zinc-400 font-mono text-sm mt-2">"{{ p.spam_message }}"</p>
+                            </div>
+                            <form method="post" action="/admin/delete_payload/{{ p._id }}">
+                                <button class="text-red-500 hover:bg-red-900/30 px-4 py-2 rounded text-sm font-bold transition">Delete</button>
+                            </form>
+                        </div>
+                    {% endfor %}
                     </div>
-                    <form method="post" action="/admin/delete_payload/{{ p._id }}">
-                        <button class="text-red-500 hover:bg-red-900/30 px-4 py-2 rounded text-sm font-bold transition">Delete</button>
-                    </form>
                 </div>
             {% endfor %}
             </div>
@@ -178,8 +188,4 @@
             document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
             
             document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
-            document.getElementById('form-save-doc').action = '/admin/db/edit_doc/' + collection + '/' + docId;
-        }
-    </script>
-</body>
-</html>
+            document.getElementById('form-save-
