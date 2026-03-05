@@ -2,32 +2,63 @@ import os, asyncio, discord, random
 from discord.ext import commands
 from ai import get_preloaded_payloads
 from db import payload_armory
+from premium import is_guild_premium, check_and_set_cooldown, PREMIUM_FEATURES
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000") # Ensure this is set in your .env
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
 engine_state = {"active": True}
 active_wargames = {}
 pending_dropdowns = {} 
-active_guild_sessions = set() # BUG 1 FIX: Guild-Level Session Lock
+active_guild_sessions = set() # Guild-Level Session Lock
+
+class PremiumUpgradeView(discord.ui.View):
+    def __init__(self, guild_id):
+        super().__init__()
+        self.add_item(discord.ui.Button(label="Unlock Premium Protocols", url=f"{BASE_URL}/server/{guild_id}/premium", style=discord.ButtonStyle.link, emoji="💎"))
 
 class RaidSelect(discord.ui.Select):
     def __init__(self, original_cmd_msg):
         self.original_cmd_msg = original_cmd_msg
         options = [
-            discord.SelectOption(label="Phishing Link Wargame", description="Detect obfuscated URLs vs safe links.", emoji="🎣", value="phishing"),
-            discord.SelectOption(label="Spam Flood Wargame", description="Handle bot floods vs excited users.", emoji="🌊", value="spam_flood"),
-            discord.SelectOption(label="Fake Moderator Wargame", description="Verify authority & social engineering.", emoji="🛡️", value="fake_mod"),
-            discord.SelectOption(label="Insider Threat Wargame", description="Trusted users turning rogue.", emoji="🕵️", value="insider_threat"),
-            discord.SelectOption(label="Escalation Conflict", description="Judge proportional response in arguments.", emoji="🤬", value="escalation"),
-            discord.SelectOption(label="Coordinated Harassment", description="Identify and stop targeted brigading.", emoji="🎯", value="harassment")
+            discord.SelectOption(label="Phishing Link Wargame", description="Free | Detect obfuscated URLs.", emoji="🎣", value="phishing"),
+            discord.SelectOption(label="Spam Flood Wargame", description="Free | Handle bot floods.", emoji="🌊", value="spam_flood"),
+            discord.SelectOption(label="[💎 Premium] Fake Moderator", description="Verify authority.", emoji="🛡️", value="fake_mod"),
+            discord.SelectOption(label="[💎 Premium] Insider Threat", description="Trusted users turning rogue.", emoji="🕵️", value="insider_threat"),
+            discord.SelectOption(label="[💎 Premium] Escalation Conflict", description="Judge proportional response.", emoji="🤬", value="escalation"),
+            discord.SelectOption(label="[💎 Premium] Coordinated Harass", description="Stop targeted brigading.", emoji="🎯", value="harassment")
         ]
         super().__init__(placeholder="Select a Training Protocol...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        selected_raid = self.values[0]
+        guild_id = interaction.guild.id
+        
+        # 1. PREMIUM CHECK
+        is_prem = await is_guild_premium(guild_id)
+        if selected_raid in PREMIUM_FEATURES and not is_prem:
+            await interaction.response.send_message(
+                "🛑 **This is a Premium Security Feature.**\n\nPlease purchase a Sylas Premium license for this server to become an Alpha Tester and unlock advanced Red Team simulations.",
+                ephemeral=True, 
+                view=PremiumUpgradeView(guild_id)
+            )
+            return # Stops execution, leaves dropdown intact
+
+        # 2. COOLDOWN CHECK
+        allowed, time_left = await check_and_set_cooldown(guild_id, selected_raid, is_prem)
+        if not allowed:
+            tier_text = "4-Hour" if is_prem else "24-Hour"
+            await interaction.response.send_message(
+                f"⏳ **Protocol on Cooldown.**\n\nYour server is currently on a {tier_text} cooldown for the `{selected_raid}` module to prevent API abuse.\n**Time Remaining:** {time_left}",
+                ephemeral=True
+            )
+            return
+
+        # 3. EXECUTE
         pending_dropdowns.pop(interaction.message.id, None)
         await interaction.response.edit_message(view=None) 
-        await execute_wargame(interaction, self.values[0], interaction.message, self.original_cmd_msg)
+        await execute_wargame(interaction, selected_raid, interaction.message, self.original_cmd_msg)
 
 class RaidView(discord.ui.View):
     def __init__(self, original_cmd_msg):
@@ -37,7 +68,7 @@ class RaidView(discord.ui.View):
         self.add_item(RaidSelect(original_cmd_msg))
 
     async def on_timeout(self):
-        # BUG 1 FIX: Cleanup session lock on timeout
+        # Cleanup session lock on timeout
         if self.original_cmd_msg.guild.id in active_guild_sessions:
             active_guild_sessions.remove(self.original_cmd_msg.guild.id)
             
@@ -60,7 +91,7 @@ async def start_raid(interaction: discord.Interaction):
         await interaction.response.send_message("❌ **Engine Offline.** Contact the Bot Administrator.", ephemeral=True)
         return
 
-    # BUG 1 FIX: Enforce 1 Wargame per Guild at a time
+    # Enforce 1 Wargame per Guild at a time
     if interaction.guild.id in active_guild_sessions:
         await interaction.response.send_message("❌ **A Wargame is already active in this server.** Finish or cancel it first.", ephemeral=True)
         return
@@ -98,7 +129,7 @@ async def end_raid(interaction: discord.Interaction):
             wargame["cancelled"] = True
             killed_active_game = True
             
-    # 2. Kill pending dropdown menus (if they haven't selected a game yet)
+    # 2. Kill pending dropdown menus
     to_remove = []
     for msg_id, msg in pending_dropdowns.items():
         if msg.guild.id == interaction.guild.id:
@@ -127,25 +158,25 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     spawned_msgs = []
     game_id = str(interaction.id)
     
-    # BUG 2 FIX: Randomized Ratio of Threats to Innocents
+    # Randomized Ratio of Threats to Innocents
     scam_count = random.choice([2, 3])
     innocent_count = 5 - scam_count
     
-    # Generate Payload Mix via Database (Pulls contextual innocents!)
+    # Generate Payload Mix via Database
     scams = await get_preloaded_payloads(scam_count, raid_type)
     innocents = await get_preloaded_payloads(innocent_count, f"innocent_{raid_type}")
     
     for s in scams: s["is_malicious"] = True
     for i in innocents: i["is_malicious"] = False
         
-    # 🔥 BURN AFTER READING PROTOCOL
+    # BURN AFTER READING PROTOCOL
     used_ids = [doc["_id"] for doc in scams + innocents if doc.get("_id")]
     if used_ids: await payload_armory.delete_many({"_id": {"$in": used_ids}})
     
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
     
-    # BUG 2 FIX: Webhook Identity Rotation
+    # Webhook Identity Rotation
     valid_names = [p["username"] for p in all_payloads if p.get("username")]
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
@@ -169,12 +200,12 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 
         for _ in range(60):
             wargame = active_wargames.get(game_id)
-            # BUG 1 FIX: Heartbeat Deletion Check breaks loop immediately if cancelled
+            # Heartbeat Deletion Check breaks loop immediately if cancelled
             if not wargame or wargame["failed"] or wargame.get("cancelled") or wargame["scams_left"] <= 0: break
             await asyncio.sleep(1)
 
     finally:
-        # BUG 1 FIX: Release Session Lock
+        # Release Session Lock
         if interaction.guild.id in active_guild_sessions:
             active_guild_sessions.remove(interaction.guild.id)
             
@@ -224,7 +255,7 @@ async def on_message_delete(message):
         return
 
     for game_id, wargame in list(active_wargames.items()):
-        # BUG 1 FIX: Detect Heartbeat Message Deletion
+        # Detect Heartbeat Message Deletion
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             wargame["cancelled"] = True
             continue
