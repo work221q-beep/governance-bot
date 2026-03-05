@@ -33,203 +33,116 @@ async def home(request: Request):
 
 @app.get("/login")
 async def login():
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={DISCORD_REDIRECT_URI}&scope=identify%20guilds"
-    return RedirectResponse(url)
+    auth_url = (
+        f"https://discord.com/api/oauth2/authorize"
+        f"?client_id={DISCORD_CLIENT_ID}"
+        f"&redirect_uri={httpx.utils.quote(DISCORD_REDIRECT_URI)}"
+        f"&response_type=code&scope=identify%20guilds"
+    )
+    return RedirectResponse(auth_url)
 
-@app.get("/logout")
-async def logout():
-    response = RedirectResponse(url="/")
-    response.delete_cookie("session", path="/")
-    response.delete_cookie("admin_auth", path="/")
-    return response
-
-@app.get("/invite")
-async def invite_bot():
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
-    return RedirectResponse(url)
-
-@app.get("/auth/callback")
+@app.get("/callback")
 async def callback(code: str):
+    data = {
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
     async with httpx.AsyncClient() as client:
-        token_res = await client.post("https://discord.com/api/oauth2/token", data={
-            "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
-            "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI
-        })
-        access_token = token_res.json().get("access_token")
-        user = (await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})).json()
-        guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
+        token_res = await client.post("https://discord.com/api/oauth2/token", data=data, headers=headers)
+        token_json = token_res.json()
+        access_token = token_json.get("access_token")
 
-    manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png" if user.get("avatar") else None
-    
-    response = RedirectResponse(url="/dashboard")
-    response.set_cookie("session", serializer.dumps({
-        "id": user["id"], "username": user["username"], "avatar": avatar_url, "guilds": manageable_guilds
-    }), httponly=True)
+        user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
+        user_data = user_res.json()
+
+        guilds_res = await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})
+        guilds_data = guilds_res.json()
+        
+    admin_guilds = [g for g in guilds_data if (int(g["permissions"]) & 0x8) == 0x8]
+    session_data = {
+        "id": user_data["id"],
+        "username": user_data["username"],
+        "avatar": f"https://cdn.discordapp.com/avatars/{user_data['id']}/{user_data['avatar']}.png" if user_data.get("avatar") else None,
+        "guilds": admin_guilds
+    }
+
+    response = RedirectResponse("/dashboard")
+    response.set_cookie("session", serializer.dumps(session_data), max_age=86400, httponly=True)
     return response
 
 @app.get("/dashboard")
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
+    if not user_cookie: return RedirectResponse("/")
+    user = serializer.loads(user_cookie)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
+
+@app.get("/server/{server_id}")
+async def server_panel(request: Request, server_id: str):
+    if not server_id or server_id == "None": return RedirectResponse("/dashboard")
     
-    session_user = serializer.loads(user_cookie)
-    is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
-
-@app.get("/server/{guild_id}")
-async def redirect_to_permissions(guild_id: str):
-    return RedirectResponse(f"/server/{guild_id}/permissions")
-
-@app.get("/server/{guild_id}/permissions")
-async def permissions_manager(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
+    if not user_cookie: return RedirectResponse("/")
+    user = serializer.loads(user_cookie)
     
-    session_user = serializer.loads(user_cookie)
-    guild = bot.get_guild(int(guild_id))
+    guild = bot.get_guild(int(server_id))
+    bot_present = guild is not None
+    channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels] if bot_present else []
+    roles = [{"id": str(r.id), "name": r.name, "color": str(r.color)} for r in guild.roles if r.name != "@everyone"] if bot_present else []
     
-    bot_in_guild = True if guild else False
-    guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
-
-    roles, users, bots, channels = [], [], [], []
+    config = await server_configs.find_one({"server_id": server_id}) or {}
     
-    if bot_in_guild:
-        for r in reversed(guild.roles):
-            roles.append({
-                "id": str(r.id), "name": r.name, 
-                "color": str(r.color) if r.color.value != 0 else "#71717a",
-                "is_everyone": r.name == "@everyone", "is_bot": r.managed
-            })
-            
-        for m in guild.members:
-            avatar = str(m.display_avatar.url) if m.display_avatar else None
-            member_data = {
-                "id": str(m.id), "name": m.name, "display_name": m.display_name,
-                "avatar": avatar, "top_role": m.top_role.name if m.top_role else "None"
-            }
-            if m.bot: bots.append(member_data)
-            else: users.append(member_data)
-                
-        for c in guild.channels:
-            channels.append({"id": str(c.id), "name": c.name, "type": str(c.type)})
-
-    return templates.TemplateResponse("permissions.html", {
-        "request": request, "guild_id": guild_id, "roles": roles, "users": users, 
-        "bots": bots, "channels": channels, "guild_name": guild_name,
-        "user": session_user, "bot_in_guild": bot_in_guild
+    return templates.TemplateResponse("server.html", {
+        "request": request, "user": user, "server_id": server_id, "server_name": guild.name if bot_present else "Unknown Server",
+        "bot_present": bot_present, "channels": channels, "roles": roles, "config": config
     })
 
-@app.post("/server/{guild_id}/action/{action}/{target_id}")
-async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
+@app.get("/server/{server_id}/permissions")
+async def permissions_panel(request: Request, server_id: str):
+    if not server_id or server_id == "None": return RedirectResponse("/dashboard")
+    
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
+    if not user_cookie: return RedirectResponse("/")
+    user = serializer.loads(user_cookie)
     
-    form_data = await request.form()
-    custom_reason = form_data.get("reason", "No reason provided.")
-    include_name = form_data.get("include_name") == "on"
-    timeout_duration = int(form_data.get("duration", 10))
+    guild = bot.get_guild(int(server_id))
+    bot_present = guild is not None
+    roles = [{"id": str(r.id), "name": r.name, "color": str(r.color)} for r in guild.roles if r.name != "@everyone"] if bot_present else []
+    channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels] if bot_present else []
     
-    session_user = serializer.loads(user_cookie)
-    admin_name = session_user.get('username')
-    guild = bot.get_guild(int(guild_id))
-    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
+    vulns = await vuln_state.find({"server_id": server_id}).to_list(100)
     
-    target = guild.get_member(int(target_id))
-    if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
-    
-    web_member = guild.get_member(int(session_user.get("id")))
-    
-    if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
-        return HTMLResponse(
-            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-            f"<h2 style='color:#ef4444; font-weight: 900;'>Admin Access Denied</h2>"
-            f"<p>You cannot {action} a user with an equal or higher role.</p>"
-            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
-            
-    if guild.owner_id == target.id or guild.me.top_role <= target.top_role:
-        return HTMLResponse(
-            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-            f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
-            f"<p>Sylas cannot {action} <b>{target.name}</b>. The bot's role must be higher than the target's role.</p>"
-            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
-            
-    audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
-    
-    if include_name:
-        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
-    else:
-        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}"
-
-    if not target.bot:
-        try:
-            await target.send(dm_message)
-        except discord.Forbidden:
-            pass
-            
-    try:
-        if action == "kick": 
-            await target.kick(reason=audit_log_reason)
-        elif action == "ban": 
-            await target.ban(reason=audit_log_reason)
-        elif action == "timeout": 
-            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
-    except discord.Forbidden:
-        return HTMLResponse("Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.", status_code=403)
-            
-    tab = "bots" if target.bot else "users"
-    return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
-
-@app.post("/server/{guild_id}/channel/{channel_id}/override")
-async def channel_override(request: Request, guild_id: str, channel_id: str):
-    user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
-    
-    form_data = await request.form()
-    role_id = form_data.get("role_id")
-    
-    guild = bot.get_guild(int(guild_id))
-    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
-    
-    channel = guild.get_channel(int(channel_id))
-    role = guild.get_role(int(role_id)) if role_id else guild.default_role
-    
-    if channel and role:
-        overwrite = channel.overwrites_for(role)
-        for perm in ["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
-            val = form_data.get(perm)
-            if val == "allow": setattr(overwrite, perm, True)
-            elif val == "deny": setattr(overwrite, perm, False)
-            elif val == "inherit": setattr(overwrite, perm, None)
-            
-        try:
-            await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
-        except discord.Forbidden:
-            return HTMLResponse("Access Denied.", status_code=403)
-            
-    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
+    return templates.TemplateResponse("permissions.html", {
+        "request": request, "user": user, "server_id": server_id, "server_name": guild.name if bot_present else "Unknown Server",
+        "bot_present": bot_present, "roles": roles, "channels": channels, "vulns": vulns
+    })
 
 @app.get("/admin")
-async def admin_panel(request: Request, key: str = None):
-    admin_auth = request.cookies.get("admin_auth")
+async def master_admin(request: Request, key: str = None, tab: str = "control"):
+    auth_cookie = request.cookies.get("admin_auth")
+    if auth_cookie != "true" and key != ADMIN_KEY:
+        return RedirectResponse("/")
+        
+    response = HTMLResponse()
     if key == ADMIN_KEY:
-        response = RedirectResponse("/admin")
-        response.set_cookie("admin_auth", "true", httponly=True)
-        return response
-    if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
+        response.set_cookie("admin_auth", "true", max_age=86400, httponly=True)
+        
+    # BUG FIX: Increased payload fetching from 100 to 500 to show complete Armory limit
+    payloads = await payload_armory.find().sort("created_at", -1).to_list(500)
     
-    # Sort by raid_type and limit increased to 1000 for the full armory view
-    payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
-    db = payload_armory.database
-    collection_names = await db.list_collection_names()
     db_structure = {}
-    for coll_name in collection_names:
-        docs = await db[coll_name].find().sort("_id", -1).to_list(100)
-        for d in docs:
+    colls = {"server_configs": server_configs, "vulnerability_state": vuln_state, "payload_armory": payload_armory}
+    for label, collection in colls.items():
+        docs = await collection.find().to_list(500)
+        for d in docs: 
             d["_id"] = str(d["_id"])
-            for k, v in d.items():
-                if isinstance(v, datetime.datetime): d[k] = v.isoformat()
-        db_structure[coll_name] = docs
+            if "created_at" in d and isinstance(d["created_at"], datetime.datetime):
+                d["created_at"] = d["created_at"].isoformat()
+        db_structure[label] = docs
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
@@ -262,3 +175,41 @@ async def admin_purge_armory(request: Request):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse("/")
+    response.delete_cookie("session")
+    response.delete_cookie("admin_auth")
+    return response
+
+@app.post("/server/{server_id}/save")
+async def save_config(request: Request, server_id: str):
+    form = await request.form()
+    await server_configs.update_one(
+        {"server_id": server_id},
+        {"$set": {"log_channel": form.get("log_channel"), "alert_channel": form.get("alert_channel")}},
+        upsert=True
+    )
+    return RedirectResponse(f"/server/{server_id}", status_code=303)
+
+@app.post("/admin/db/delete_doc/{collection}/{doc_id}")
+async def delete_doc(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    target = server_configs if collection == "server_configs" else vuln_state if collection == "vulnerability_state" else payload_armory
+    await target.delete_one({"_id": ObjectId(doc_id)})
+    return RedirectResponse("/admin?tab=database", status_code=303)
+
+@app.post("/admin/db/edit_doc/{collection}/{doc_id}")
+async def edit_doc(request: Request, collection: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form = await request.form()
+    raw_json = form.get("raw_json")
+    try:
+        updated_data = json.loads(raw_json)
+        if "_id" in updated_data: del updated_data["_id"]
+        target = server_configs if collection == "server_configs" else vuln_state if collection == "vulnerability_state" else payload_armory
+        await target.update_one({"_id": ObjectId(doc_id)}, {"$set": updated_data})
+    except Exception as e:
+        print("JSON Error:", e)
+    return RedirectResponse("/admin?tab=database", status_code=303)
