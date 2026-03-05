@@ -9,10 +9,10 @@ SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 # Global HTTP Client for connection pooling
 http_client = httpx.AsyncClient(timeout=60.0)
 
-# Training Configuration
+# Training Configuration (150 Non-Innocent, ~200 Innocent)
 MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
 CAPS = {m: 25 for m in MODULES}
-for m in MODULES: CAPS[f"innocent_{m}"] = 50
+for m in MODULES: CAPS[f"innocent_{m}"] = 34 # 34 * 6 = 204 total innocent payloads
 
 # Track model health (15s timeout on failure)
 model_backoff = {"openrouter": 0, "sambanova": 0}
@@ -24,7 +24,7 @@ def get_ai_prompt(raid_type: str) -> str:
     # Logic for specific module prompts
     prompts = {
         "phishing": "realistic Discord phishing links (e.g., fake steam, fake nitro).",
-        "spam_flood": "highly repetitive bot spam messages.",
+        "spam_flood": "different, unique examples of annoying bot spam messages (make each of the 5 completely different).",
         "fake_mod": "messages using social engineering to pretend to be a server admin/mod.",
         "insider_threat": "messages where a trusted user goes rogue with malicious links.",
         "escalation": "toxic messages escalating an argument into severe harassment.",
