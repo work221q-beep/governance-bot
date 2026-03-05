@@ -16,7 +16,7 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "masterkey123")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") # Replaced OLLAMA_URL
 MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID", "YOUR_DISCORD_ID_HERE")
 
 @app.on_event("startup")
@@ -133,17 +133,21 @@ async def master_admin(request: Request, key: str = None, tab: str = "control"):
         
     payloads = await payload_armory.find().sort("created_at", -1).to_list(100)
     
-    collections = await init_indexes() 
+    # Corrected the variable names for the eval call to prevent crashes
     db_structure = {}
-    for coll_name in ["server_configs", "vulnerability_state", "payload_armory"]:
-        docs = await eval(coll_name).find().to_list(100)
-        for d in docs: d["_id"] = str(d["_id"])
-        if "created_at" in d: d["created_at"] = d["created_at"].isoformat()
-        db_structure[coll_name] = docs
+    collections = {"server_configs": server_configs, "vulnerability_state": vuln_state, "payload_armory": payload_armory}
+    for label, coll in collections.items():
+        docs = await coll.find().to_list(100)
+        for d in docs: 
+            d["_id"] = str(d["_id"])
+            if "created_at" in d and isinstance(d["created_at"], datetime.datetime):
+                d["created_at"] = d["created_at"].isoformat()
+        db_structure[label] = docs
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "openrouter_status": "ONLINE", "db_structure": db_structure
+        "ollama_status": "ONLINE", # Kept as ollama_status so admin.html doesn't break
+        "db_structure": db_structure
     })
 
 @app.post("/admin/toggle_bot")
@@ -157,6 +161,7 @@ async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     bg_tasks.add_task(harvest_payloads, "phishing")
     bg_tasks.add_task(harvest_payloads, "ping")
+    bg_tasks.add_task(harvest_payloads, "innocent") # Added innocent
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
@@ -181,9 +186,8 @@ async def logout():
 @app.post("/admin/db/delete_doc/{collection}/{doc_id}")
 async def delete_doc(request: Request, collection: str, doc_id: str):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
-    if collection == "server_configs": await server_configs.delete_one({"_id": ObjectId(doc_id)})
-    elif collection == "vulnerability_state": await vuln_state.delete_one({"_id": ObjectId(doc_id)})
-    elif collection == "payload_armory": await payload_armory.delete_one({"_id": ObjectId(doc_id)})
+    target_coll = server_configs if collection == "server_configs" else vuln_state if collection == "vulnerability_state" else payload_armory
+    await target_coll.delete_one({"_id": ObjectId(doc_id)})
     return RedirectResponse("/admin?tab=database", status_code=303)
 
 @app.post("/admin/db/edit_doc/{collection}/{doc_id}")
@@ -194,10 +198,8 @@ async def edit_doc(request: Request, collection: str, doc_id: str):
     try:
         updated_data = json.loads(raw_json)
         if "_id" in updated_data: del updated_data["_id"]
-        
-        if collection == "server_configs": await server_configs.update_one({"_id": ObjectId(doc_id)}, {"$set": updated_data})
-        elif collection == "vulnerability_state": await vuln_state.update_one({"_id": ObjectId(doc_id)}, {"$set": updated_data})
-        elif collection == "payload_armory": await payload_armory.update_one({"_id": ObjectId(doc_id)}, {"$set": updated_data})
+        target_coll = server_configs if collection == "server_configs" else vuln_state if collection == "vulnerability_state" else payload_armory
+        await target_coll.update_one({"_id": ObjectId(doc_id)}, {"$set": updated_data})
     except Exception as e:
         print("JSON parse error", e)
     return RedirectResponse("/admin?tab=database", status_code=303)
