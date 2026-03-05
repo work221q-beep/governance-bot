@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Sylas | Security Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f4f4f5; }</style>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tab = urlParams.get('tab');
+            if (tab && document.getElementById(tab)) {
+                switchTab(tab);
+            }
+        });
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            let selectedTab = document.getElementById(tabName);
+            if(selectedTab) selectedTab.classList.remove('hidden');
+            
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-red-600/10', 'text-red-500', 'border-red-500/20');
+                el.classList.add('text-zinc-400', 'border-transparent');
+            });
+            
+            let activeBtn = document.getElementById('btn-' + tabName);
+            if(activeBtn) {
+                activeBtn.classList.remove('text-zinc-400', 'border-transparent');
+                activeBtn.classList.add('bg-red-600/10', 'text-red-500', 'border-red-500/20');
+            }
+        }
+
+        function openChannelModal(channelId, channelName) {
+            document.getElementById('modal-channel-id').value = channelId;
+            document.getElementById('modal-channel-name').innerText = "Overrides: " + channelName;
+            document.getElementById('channel-modal').classList.remove('hidden');
+            document.getElementById('override-form').action = `/server/{{ guild_id }}/channel/${channelId}/override`;
+        }
+
+        function closeChannelModal() {
+            document.getElementById('channel-modal').classList.add('hidden');
+        }
+
+        function openModModal(action, targetId, targetName) {
+            let actionCap = action.charAt(0).toUpperCase() + action.slice(1);
+            document.getElementById('mod-modal-title').innerText = `${actionCap} User: ${targetName}`;
+            document.getElementById('mod-form-action-text').innerText = `You are about to ${action} ${targetName}. They will receive a DM from the bot.`;
+            
+            // Dynamic UI: Show Duration Dropdown only if Timeout is selected
+            let durationContainer = document.getElementById('timeout-duration-container');
+            if (action === 'timeout') {
+                durationContainer.classList.remove('hidden');
+            } else {
+                durationContainer.classList.add('hidden');
+            }
+
+            document.getElementById('mod-modal').classList.remove('hidden');
+            document.getElementById('mod-form').action = `/server/{{ guild_id }}/action/${action}/${targetId}`;
+        }
+
+        function closeModModal() {
+            document.getElementById('mod-modal').classList.add('hidden');
+        }
+    </script>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    {% if not bot_in_guild %}
+    <div class="flex-1 flex flex-col items-center justify-center p-10 relative">
+        <a href="/dashboard" class="absolute top-10 left-10 text-zinc-500 hover:text-white transition font-bold">← Back to Dashboard</a>
+        <div class="text-center max-w-lg">
+            <div class="w-24 h-24 bg-red-900/20 rounded-full border border-red-900/50 flex items-center justify-center mx-auto mb-6">
+                <span class="text-4xl">⚠️</span>
+            </div>
+            <h2 class="text-3xl font-black text-white mb-4">Connection Required</h2>
+            <p class="text-zinc-400 mb-8 leading-relaxed">Sylas is not currently present in <strong>{{ guild_name }}</strong>. You must invite the bot to the server before you can manage its security protocols.</p>
+            <a href="/invite" target="_blank" class="inline-block bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg transition shadow-[0_0_20px_rgba(220,38,38,0.3)]">
+                Deploy Sylas to Server
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <aside class="w-64 bg-[#141519] border-r border-zinc-800 flex flex-col">
+        <div class="p-6 border-b border-zinc-800">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-red-600">.AI</span></h1>
+            <p class="text-xs text-zinc-500 mt-1 uppercase tracking-widest">{{ guild_name }}</p>
+        </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <button id="btn-roles" onclick="switchTab('roles')" class="tab-btn w-full text-left px-4 py-3 rounded-lg bg-red-600/10 text-red-500 font-semibold border border-red-500/20 transition">👥 Roles Hierarchy</button>
+            <button id="btn-users" onclick="switchTab('users')" class="tab-btn w-full text-left px-4 py-3 rounded-lg text-zinc-400 border border-transparent hover:bg-zinc-800 transition">👤 User Directory</button>
+            <button id="btn-bots" onclick="switchTab('bots')" class="tab-btn w-full text-left px-4 py-3 rounded-lg text-zinc-400 border border-transparent hover:bg-zinc-800 transition">🤖 Integrations</button>
+            <button id="btn-channels" onclick="switchTab('channels')" class="tab-btn w-full text-left px-4 py-3 rounded-lg text-zinc-400 border border-transparent hover:bg-zinc-800 transition">📁 Channel Matrix</button>
+        </nav>
+        <div class="p-4 border-t border-zinc-800 space-y-2">
+            <a href="/dashboard" class="block text-center w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 rounded transition text-sm">← Dashboard</a>
+            <a href="/logout" class="block text-center w-full border border-red-900/50 hover:bg-red-900/30 text-red-500 font-bold py-2 rounded transition text-sm">Logout</a>
+        </div>
+    </aside>
+
+    <main class="flex-1 overflow-y-auto p-10 relative">
+        <div class="max-w-6xl mx-auto">
+            <header class="mb-10 flex justify-between items-end border-b border-zinc-800 pb-6">
+                <div>
+                    <h2 class="text-4xl font-black text-white mb-2 tracking-tight">Security Editor</h2>
+                    <p class="text-zinc-400 text-lg">Actively managing server constraints for {{ guild_name }}.</p>
+                </div>
+            </header>
+
+            <div id="roles" class="tab-content space-y-4">
+                {% for role in roles %}
+                <div class="bg-[#141519] border {% if role.is_everyone %}border-red-600 shadow-[0_0_15px_rgba(220,38,38,0.2)]{% else %}border-zinc-800{% endif %} p-4 rounded-xl flex items-center gap-4">
+                    {% if not role.is_everyone %}<span class="w-3 h-3 rounded-full" style="background-color: {{ role.color }};"></span>{% endif %}
+                    <span class="font-bold text-lg text-white">{{ role.name }}</span>
+                    {% if role.is_everyone %}<span class="text-xs bg-red-600 text-white px-2 py-1 rounded font-bold uppercase tracking-wide">Base Layer</span>{% endif %}
+                    {% if role.is_bot %}<span class="text-xs bg-blue-600 text-white px-2 py-1 rounded font-bold uppercase tracking-wide">Integration</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+
+            <div id="users" class="tab-content hidden space-y-4">
+                {% for m in users %}
+                <div class="bg-[#141519] border border-zinc-800 p-4 rounded-xl flex justify-between items-center">
+                    <div class="flex items-center gap-4">
+                        {% if m.avatar %}
+                            <img src="{{ m.avatar }}" class="w-10 h-10 rounded-full">
+                        {% else %}
+                            <div class="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center font-bold">{{ m.name[0] }}</div>
+                        {% endif %}
+                        <div>
+                            <span class="font-bold text-white block">{{ m.display_name }}</span>
+                            <span class="text-xs text-zinc-500 font-mono">{{ m.name }} | Top Role: {{ m.top_role }}</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="openModModal('timeout', '{{ m.id }}', '{{ m.name }}')" class="bg-yellow-600/20 hover:bg-yellow-600 text-yellow-500 hover:text-white px-4 py-2 rounded font-bold text-sm transition">Timeout</button>
+                        <button onclick="openModModal('kick', '{{ m.id }}', '{{ m.name }}')" class="bg-orange-600/20 hover:bg-orange-600 text-orange-500 hover:text-white px-4 py-2 rounded font-bold text-sm transition">Kick</button>
+                        <button onclick="openModModal('ban', '{{ m.id }}', '{{ m.name }}')" class="bg-red-900/40 hover:bg-red-700 text-red-500 hover:text-white px-4 py-2 rounded font-bold text-sm transition">Ban</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div id="bots" class="tab-content hidden space-y-4">
+                {% for m in bots %}
+                <div class="bg-[#141519] border border-blue-900/30 p-4 rounded-xl flex justify-between items-center">
+                    <div class="flex items-center gap-4">
+                        {% if m.avatar %}
+                            <img src="{{ m.avatar }}" class="w-10 h-10 rounded-full">
+                        {% else %}
+                            <div class="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center font-bold">{{ m.name[0] }}</div>
+                        {% endif %}
+                        <div>
+                            <span class="font-bold text-blue-400 block">{{ m.name }}</span>
+                            <span class="text-xs text-zinc-500 font-mono">Top Role: {{ m.top_role }}</span>
+                        </div>
+                    </div>
+                    <button onclick="openModModal('kick', '{{ m.id }}', '{{ m.name }}')" class="bg-red-900/20 hover:bg-red-800 text-red-500 hover:text-white px-4 py-2 rounded font-bold text-sm transition">Eject</button>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div id="channels" class="tab-content hidden space-y-4">
+                {% for c in channels %}
+                <div class="bg-[#141519] border border-zinc-800 p-4 rounded-xl flex justify-between items-center hover:border-zinc-500 transition cursor-pointer" onclick="openChannelModal('{{ c.id }}', '{{ c.name }}')">
+                    <div class="flex items-center gap-4">
+                        <span class="text-zinc-500 font-bold text-xl">#</span>
+                        <span class="font-bold text-white">{{ c.name }}</span>
+                        <span class="text-xs text-zinc-600 font-mono ml-2 border border-zinc-800 px-2 py-1 rounded bg-[#0f1115]">{{ c.type }}</span>
+                    </div>
+                    <span class="text-zinc-500 text-sm">Configure Matrix →</span>
+                </div>
+                {% endfor %}
+            </div>
+
+        </div>
+    </main>
+
+    <div id="mod-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div class="bg-[#141519] border border-zinc-700 rounded-2xl w-full max-w-lg p-8 shadow-2xl">
+            <h3 id="mod-modal-title" class="text-2xl font-bold text-red-500 mb-2">Execute Action</h3>
+            <p id="mod-form-action-text" class="text-zinc-400 text-sm mb-6"></p>
+            
+            <form id="mod-form" method="post" class="space-y-5">
+                
+                <div id="timeout-duration-container" class="hidden">
+                    <label class="block text-zinc-300 text-sm font-bold mb-2">Duration</label>
+                    <select name="duration" class="w-full bg-[#0f1115] border border-zinc-700 text-white p-3 rounded-lg focus:outline-none focus:border-red-500">
+                        <option value="5">5 Minutes</option>
+                        <option value="10" selected>10 Minutes</option>
+                        <option value="60">1 Hour</option>
+                        <option value="1440">1 Day</option>
+                        <option value="10080">1 Week</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-zinc-300 text-sm font-bold mb-2">Message to User (DM)</label>
+                    <textarea name="reason" rows="3" class="w-full bg-[#0f1115] border border-zinc-700 text-white p-3 rounded-lg focus:outline-none focus:border-red-500" placeholder="State the reason for this action..." required></textarea>
+                </div>
+
+                <div class="flex items-center gap-3 bg-[#0f1115] p-4 rounded-lg border border-zinc-800">
+                    <input type="checkbox" id="include_name" name="include_name" checked class="w-5 h-5 accent-red-600 cursor-pointer">
+                    <label for="include_name" class="text-sm text-zinc-300 cursor-pointer select-none">Show my Admin Username in the DM</label>
+                </div>
+
+                <div class="flex justify-end gap-4 mt-6">
+                    <button type="button" onclick="closeModModal()" class="px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Cancel</button>
+                    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold px-8 py-2 rounded-lg transition">Confirm & DM</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div class="bg-[#141519] border border-zinc-700 rounded-2xl w-full max-w-2xl p-8 shadow-2xl">
+            <h3 id="modal-channel-name" class="text-2xl font-bold text-white mb-6">Configure Overrides</h3>
+            
+            <form id="override-form" method="post" class="space-y-6">
+                <input type="hidden" id="modal-channel-id" name="channel_id">
+                
+                <div>
+                    <label class="block text-zinc-400 text-sm font-bold mb-2">Select Target Role</label>
+                    <select name="role_id" class="w-full bg-[#0f1115] border border-zinc-700 text-white p-3 rounded-lg focus:outline-none focus:border-blue-500">
+                        {% for role in roles %}
+                            <option value="{{ role.id }}">{{ role.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#0f1115] p-6 rounded-lg border border-zinc-800">
+                    {% for perm in [('view_channel', 'View Channel'), ('send_messages', 'Send Messages'), ('embed_links', 'Embed Links'), ('attach_files', 'Attach Files')] %}
+                    <div class="flex justify-between items-center border-b border-zinc-800 pb-2">
+                        <span class="text-white text-sm font-bold">{{ perm[1] }}</span>
+                        <select name="{{ perm[0] }}" class="bg-zinc-800 text-sm text-white rounded p-1 border border-zinc-600">
+                            <option value="inherit">/ Inherit</option>
+                            <option value="allow" class="text-emerald-500">✓ Allow</option>
+                            <option value="deny" class="text-red-500">✗ Deny</option>
+                        </select>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="flex justify-end gap-4 mt-8">
+                    <button type="button" onclick="closeChannelModal()" class="px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-2 rounded-lg transition shadow-lg">Save Override</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+</body>
+</html>
