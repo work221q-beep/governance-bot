@@ -1,7 +1,8 @@
 import os, asyncio, discord, random
+from datetime import datetime, timedelta
 from discord.ext import commands
 from ai import get_preloaded_payloads
-from db import payload_armory
+from db import payload_armory, server_configs
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
@@ -9,7 +10,7 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 engine_state = {"active": True}
 active_wargames = {}
 pending_dropdowns = {} 
-active_guild_sessions = set() # BUG 1 FIX: Guild-Level Session Lock
+active_guild_sessions = set() # Guild-Level Session Lock
 
 class RaidSelect(discord.ui.Select):
     def __init__(self, original_cmd_msg):
@@ -37,7 +38,6 @@ class RaidView(discord.ui.View):
         self.add_item(RaidSelect(original_cmd_msg))
 
     async def on_timeout(self):
-        # BUG 1 FIX: Cleanup session lock on timeout
         if self.original_cmd_msg.guild.id in active_guild_sessions:
             active_guild_sessions.remove(self.original_cmd_msg.guild.id)
             
@@ -50,7 +50,7 @@ class RaidView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync() # Registers the new slash commands with Discord
+    await bot.tree.sync()
     print(f"👻 Sylas Ghost Engine is online and slash commands synced.")
 
 @bot.tree.command(name="startraid", description="Deploy a Red Team Wargame in this channel")
@@ -60,12 +60,35 @@ async def start_raid(interaction: discord.Interaction):
         await interaction.response.send_message("❌ **Engine Offline.** Contact the Bot Administrator.", ephemeral=True)
         return
 
-    # BUG 1 FIX: Enforce 1 Wargame per Guild at a time
+    # Free Module 24-Hour Check
+    guild_id_str = str(interaction.guild.id)
+    config = await server_configs.find_one({"server_id": guild_id_str}) or {}
+    is_premium = config.get("premium", False)
+    last_raid_time = config.get("last_raid_time")
+
+    if not is_premium and last_raid_time:
+        if datetime.utcnow() < last_raid_time + timedelta(hours=24):
+            next_available = last_raid_time + timedelta(hours=24)
+            await interaction.response.send_message(
+                f"⏳ **Free Tier Limit Reached.** You can run another Wargame on <t:{int(next_available.timestamp())}:F>.\n"
+                "*(Upgrade to Premium in the Sylas dashboard to unlock unlimited modular training).* ", 
+                ephemeral=True
+            )
+            return
+
+    # Guild-Level Session Lock Check
     if interaction.guild.id in active_guild_sessions:
         await interaction.response.send_message("❌ **A Wargame is already active in this server.** Finish or cancel it first.", ephemeral=True)
         return
 
     active_guild_sessions.add(interaction.guild.id)
+
+    # Update cooldown timer for Free Servers
+    await server_configs.update_one(
+        {"server_id": guild_id_str},
+        {"$set": {"last_raid_time": datetime.utcnow()}},
+        upsert=True
+    )
 
     embed = discord.Embed(
         title="👻 SYLAS TRAINING ENGINE",
@@ -73,7 +96,6 @@ async def start_raid(interaction: discord.Interaction):
         color=discord.Color.dark_gray()
     )
     
-    # Send message, fetch it to act as our base message for the dropdown
     await interaction.response.send_message(embed=embed)
     dropdown_msg = await interaction.original_response()
     
@@ -91,14 +113,12 @@ async def end_raid(interaction: discord.Interaction):
 
     killed_active_game = False
     
-    # 1. Kill the active wargame loop
     for game_id, wargame in list(active_wargames.items()):
         channel = bot.get_channel(wargame["channel_id"])
         if channel and channel.guild.id == interaction.guild.id:
             wargame["cancelled"] = True
             killed_active_game = True
             
-    # 2. Kill pending dropdown menus (if they haven't selected a game yet)
     to_remove = []
     for msg_id, msg in pending_dropdowns.items():
         if msg.guild.id == interaction.guild.id:
@@ -109,7 +129,6 @@ async def end_raid(interaction: discord.Interaction):
     for m_id in to_remove:
         pending_dropdowns.pop(m_id, None)
 
-    # 3. Free the session lock
     if interaction.guild.id in active_guild_sessions:
         active_guild_sessions.remove(interaction.guild.id)
 
@@ -127,25 +146,22 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     spawned_msgs = []
     game_id = str(interaction.id)
     
-    # BUG 2 FIX: Randomized Ratio of Threats to Innocents
     scam_count = random.choice([2, 3])
     innocent_count = 5 - scam_count
     
-    # Generate Payload Mix via Database (Pulls contextual innocents!)
     scams = await get_preloaded_payloads(scam_count, raid_type)
     innocents = await get_preloaded_payloads(innocent_count, f"innocent_{raid_type}")
     
     for s in scams: s["is_malicious"] = True
     for i in innocents: i["is_malicious"] = False
         
-    # 🔥 BURN AFTER READING PROTOCOL
+    # BURN AFTER READING (Triggers auto-refill on next sweep)
     used_ids = [doc["_id"] for doc in scams + innocents if doc.get("_id")]
     if used_ids: await payload_armory.delete_many({"_id": {"$in": used_ids}})
     
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
     
-    # BUG 2 FIX: Webhook Identity Rotation
     valid_names = [p["username"] for p in all_payloads if p.get("username")]
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
@@ -169,18 +185,15 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 
         for _ in range(60):
             wargame = active_wargames.get(game_id)
-            # BUG 1 FIX: Heartbeat Deletion Check breaks loop immediately if cancelled
             if not wargame or wargame["failed"] or wargame.get("cancelled") or wargame["scams_left"] <= 0: break
             await asyncio.sleep(1)
 
     finally:
-        # BUG 1 FIX: Release Session Lock
         if interaction.guild.id in active_guild_sessions:
             active_guild_sessions.remove(interaction.guild.id)
             
         wargame = active_wargames.get(game_id)
         
-        # Only process final state if it wasn't cancelled by deletion or /endraid
         if wargame and not wargame.get("cancelled"):
             final_embed = discord.Embed(title="✅ WARGAME COMPLETE")
             if wargame["failed"]:
@@ -224,7 +237,6 @@ async def on_message_delete(message):
         return
 
     for game_id, wargame in list(active_wargames.items()):
-        # BUG 1 FIX: Detect Heartbeat Message Deletion
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             wargame["cancelled"] = True
             continue
