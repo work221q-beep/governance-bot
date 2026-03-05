@@ -7,6 +7,7 @@ from bson import ObjectId
 from bot import start_bot, bot, engine_state
 from ai import harvest_loop, harvest_payloads, parallel_harvest_sweep
 from db import init_indexes, payload_armory, vuln_state, server_configs
+from premium import is_guild_premium # NEW: Import Premium verification
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -118,6 +119,26 @@ async def permissions_manager(request: Request, guild_id: str):
         "request": request, "guild_id": guild_id, "roles": roles, "users": users, 
         "bots": bots, "channels": channels, "guild_name": guild_name,
         "user": session_user, "bot_in_guild": bot_in_guild
+    })
+
+# NEW: Premium Page Routing
+@app.get("/server/{guild_id}/premium")
+async def premium_manager(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    session_user = serializer.loads(user_cookie)
+    guild = bot.get_guild(int(guild_id))
+    
+    bot_in_guild = True if guild else False
+    guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
+
+    # Check database for active sub
+    has_premium = await is_guild_premium(int(guild_id))
+
+    return templates.TemplateResponse("premium.html", {
+        "request": request, "guild_id": guild_id, "guild_name": guild_name,
+        "user": session_user, "has_premium": has_premium
     })
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
