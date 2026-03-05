@@ -39,7 +39,6 @@ async def login():
 @app.get("/logout")
 async def logout():
     response = RedirectResponse(url="/")
-    # Path param is required to guarantee the browser destroys the global cookie
     response.delete_cookie("session", path="/")
     response.delete_cookie("admin_auth", path="/")
     return response
@@ -72,7 +71,6 @@ async def callback(code: str):
 @app.get("/dashboard")
 async def dashboard(request: Request):
     user_cookie = request.cookies.get("session")
-    # If not logged in, force the login pipeline as requested
     if not user_cookie: return RedirectResponse("/login")
     
     session_user = serializer.loads(user_cookie)
@@ -91,9 +89,20 @@ async def permissions_manager(request: Request, guild_id: str):
     session_user = serializer.loads(user_cookie)
     guild = bot.get_guild(int(guild_id))
     
+    bot_in_guild = True if guild else False
+    
+    guild_name = "Unknown Server"
+    if bot_in_guild:
+        guild_name = guild.name
+    else:
+        for g in session_user.get("guilds", []):
+            if str(g["id"]) == str(guild_id):
+                guild_name = g["name"]
+                break
+
     roles, users, bots, channels = [], [], [], []
     
-    if guild:
+    if bot_in_guild:
         for r in reversed(guild.roles):
             roles.append({
                 "id": str(r.id), "name": r.name, 
@@ -115,17 +124,20 @@ async def permissions_manager(request: Request, guild_id: str):
 
     return templates.TemplateResponse("permissions.html", {
         "request": request, "guild_id": guild_id, "roles": roles, "users": users, 
-        "bots": bots, "channels": channels, "guild_name": guild.name if guild else "Unknown Server",
-        "user": session_user
+        "bots": bots, "channels": channels, "guild_name": guild_name,
+        "user": session_user, "bot_in_guild": bot_in_guild
     })
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
-    """Executes moderation and handles missing Python datetimes + Role blocks."""
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/login")
     
+    form_data = await request.form()
+    custom_reason = form_data.get("reason", "No reason provided.")
+    
     session_user = serializer.loads(user_cookie)
+    admin_name = session_user.get('username')
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
@@ -144,21 +156,28 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
                 f"</div>", status_code=403
             )
             
+    audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
+    dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
+
+    # Attempt to DM the user BEFORE taking action
+    if not target.bot:
+        try:
+            await target.send(dm_message)
+        except discord.Forbidden:
+            pass 
+            
     try:
         if action == "kick": 
-            await target.kick(reason=f"Sylas Web Admin ({session_user.get('username')})")
+            await target.kick(reason=audit_log_reason)
         elif action == "ban": 
-            await target.ban(reason=f"Sylas Web Admin ({session_user.get('username')})")
+            await target.ban(reason=audit_log_reason)
         elif action == "timeout": 
-            # FIXED: Properly uses native datetime to calculate the timedelta
-            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=f"Sylas Web Admin ({session_user.get('username')})")
+            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=10), reason=audit_log_reason)
     except discord.Forbidden:
-        # VISUAL FALLBACK: Instead of failing silently, alerts the user that their Discord Role order needs fixing
         return HTMLResponse(
             f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
             f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
             f"<p style='color:#a1a1aa;'>Sylas cannot {action} <b>{target.name}</b> because their role is higher than or equal to the bot's role.</p>"
-            f"<p style='color:#71717a; font-size:12px;'>To fix this, move the Sylas role higher in your Server Settings.</p>"
             f"<a href='/server/{guild_id}/permissions' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
             f"</div>", status_code=403
         )
@@ -191,17 +210,10 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
         try:
             await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
         except discord.Forbidden:
-            return HTMLResponse(
-                f"<div style='background:#09090b; color:white; padding:40px; font-family:sans-serif; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-                f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Permission Error</h2>"
-                f"<p style='color:#a1a1aa;'>Sylas does not have permission to edit channel overrides here.</p>"
-                f"<a href='/server/{guild_id}/permissions?tab=channels' style='display:inline-block; margin-top:20px; padding:10px 20px; background:#181a20; color:white; text-decoration:none; border-radius:5px;'>Return to Dashboard</a>"
-                f"</div>", status_code=403
-            )
+            return HTMLResponse("Access Denied.", status_code=403)
             
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
-# --- MASTER ADMIN PANEL ---
 @app.get("/admin")
 async def admin_panel(request: Request, key: str = None):
     admin_auth = request.cookies.get("admin_auth")
