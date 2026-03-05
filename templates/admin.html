@@ -188,4 +188,8 @@
             document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
             
             document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
-            document.getElementById('form-save-
+            document.getElementById('form-save-doc').action = '/admin/db/edit_doc/' + collection + '/' + docId;
+        }
+    </script>
+</body>
+</html>
