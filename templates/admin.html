@@ -3,8 +3,21 @@
 <head>
     <title>Sylas | Master Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Inter', sans-serif; background-color: #050505; color: #f4f4f5; } textarea { resize: vertical; } </style>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Space Grotesk', sans-serif; background-color: #030305; color: #f4f4f5; overflow-x: hidden; }
+        .liquid-glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .glow-red { box-shadow: 0 0 20px rgba(220, 38, 38, 0.2); }
+        .ambient-blob { position: absolute; filter: blur(120px); border-radius: 50%; opacity: 0.4; z-index: -1; animation: float 15s infinite alternate ease-in-out; }
+        @keyframes float { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(30px, -30px) scale(1.1); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(220,38,38,0.5); }
+        textarea { resize: vertical; }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
     <script>
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
@@ -13,99 +26,119 @@
         }
 
         function switchTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            document.getElementById(tabName).classList.remove('hidden');
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.add('hidden');
+                el.classList.remove('fade-in');
+            });
+            let target = document.getElementById(tabName);
+            target.classList.remove('hidden');
+            target.classList.add('fade-in');
             
             document.querySelectorAll('.tab-btn').forEach(el => {
-                el.classList.remove('bg-red-600', 'text-white');
-                el.classList.add('bg-[#0f1115]', 'text-zinc-400');
+                el.classList.remove('bg-red-600/20', 'text-red-400', 'border-red-500/30', 'glow-red');
+                el.classList.add('bg-white/5', 'text-white/50', 'border-white/5');
             });
             
-            document.getElementById('btn-' + tabName).classList.add('bg-red-600', 'text-white');
-            document.getElementById('btn-' + tabName).classList.remove('bg-[#0f1115]', 'text-zinc-400');
+            let btn = document.getElementById('btn-' + tabName);
+            btn.classList.add('bg-red-600/20', 'text-red-400', 'border-red-500/30', 'glow-red');
+            btn.classList.remove('bg-white/5', 'text-white/50', 'border-white/5');
             window.history.replaceState(null, null, "?tab=" + tabName);
         }
     </script>
 </head>
-<body class="p-10 max-w-6xl mx-auto">
+<body class="p-10 max-w-7xl mx-auto relative min-h-screen">
     
-    <header class="flex justify-between items-center mb-8 border-b border-zinc-800 pb-6">
+    <!-- Animated Viscous Background -->
+    <div class="ambient-blob bg-red-900 w-[500px] h-[500px] top-[-10%] left-[-10%]"></div>
+    <div class="ambient-blob bg-purple-900 w-[400px] h-[400px] bottom-[10%] right-[-5%] animation-delay-2000"></div>
+
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 border-b border-white/10 pb-6 relative z-10">
         <div>
-            <h1 class="text-3xl font-black text-red-600 tracking-widest">MASTER CONTROL</h1>
-            <p class="text-zinc-500 font-mono text-sm mt-1">RESTRICTED ACCESS</p>
+            <h1 class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-red-800 tracking-widest uppercase">Master Control</h1>
+            <p class="text-white/40 font-mono text-xs mt-2 flex items-center gap-2">
+                <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> RESTRICTED UPLINK
+            </p>
         </div>
-        <div class="flex gap-4">
-            <a href="/dashboard" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-bold transition">Exit to App</a>
+        <div class="mt-4 md:mt-0">
+            <a href="/dashboard" class="px-6 py-3 liquid-glass hover:bg-white/10 rounded-xl text-sm font-bold transition-all flex items-center gap-2 group">
+                <span class="group-hover:-translate-x-1 transition-transform">←</span> Exit to System
+            </a>
         </div>
     </header>
 
-    <div class="flex gap-4 mb-8 border-b border-zinc-800 pb-4">
-        <button id="btn-control" onclick="switchTab('control')" class="tab-btn bg-red-600 text-white px-6 py-3 rounded-lg font-bold transition">⚙️ Control Center</button>
-        <button id="btn-armory" onclick="switchTab('armory')" class="tab-btn bg-[#0f1115] text-zinc-400 hover:text-white px-6 py-3 rounded-lg font-bold transition border border-zinc-800">☣️ Payload Armory</button>
-        <button id="btn-db" onclick="switchTab('db')" class="tab-btn bg-[#0f1115] text-zinc-400 hover:text-white px-6 py-3 rounded-lg font-bold transition border border-zinc-800">🗄️ Database Manager</button>
+    <div class="flex flex-wrap gap-4 mb-10 pb-4 relative z-10">
+        <button id="btn-control" onclick="switchTab('control')" class="tab-btn bg-red-600/20 text-red-400 border-red-500/30 glow-red border px-6 py-3 rounded-xl font-bold transition-all duration-300">⚙️ Control Center</button>
+        <button id="btn-armory" onclick="switchTab('armory')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">☣️ Payload Armory</button>
+        <button id="btn-db" onclick="switchTab('db')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🗄️ Database Matrix</button>
     </div>
 
-    <div id="control" class="tab-content grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-4">Discord Bot Engine</h3>
+    <!-- CONTROL TAB -->
+    <div id="control" class="tab-content grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10 fade-in">
+        <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
+            <div class="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <h3 class="text-xl font-bold text-white mb-6">Discord Bot Engine</h3>
             <div class="flex items-center justify-between">
-                <span class="text-2xl font-black {% if bot_active %}text-emerald-500{% else %}text-red-600{% endif %}">
+                <span class="text-3xl font-black tracking-widest {% if bot_active %}text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]{% else %}text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]{% endif %}">
                     {% if bot_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
-                <form method="post" action="/admin/toggle_bot">
-                    <button class="bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-lg font-bold text-white transition border border-zinc-700">Toggle Power</button>
+                <form method="post" action="/admin/toggle_bot" class="relative z-10">
+                    <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-xl font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95">Toggle Power</button>
                 </form>
             </div>
-            <p class="text-zinc-500 text-sm mt-4">Disabling this prevents anyone globally from running !startraid.</p>
+            <p class="text-white/40 text-sm mt-6 font-mono">Disabling this severs global !startraid execution.</p>
         </div>
 
-        <div class="bg-[#0f1115] border border-zinc-800 p-6 rounded-xl shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-4">OpenRouter Connection</h3>
+        <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
+            <div class="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <h3 class="text-xl font-bold text-white mb-6">OpenRouter Connection</h3>
             <div class="flex items-center justify-between">
-                <span class="text-2xl font-black {% if ai_status == 'ONLINE' %}text-emerald-500{% else %}text-red-600{% endif %}">
+                <span class="text-3xl font-black tracking-widest {% if ai_status == 'ONLINE' %}text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]{% else %}text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]{% endif %}">
                     {{ ai_status }}
                 </span>
             </div>
-            <p class="text-zinc-500 text-sm mt-4">Status of the remote OpenRouter LLM worker.</p>
+            <p class="text-white/40 text-sm mt-6 font-mono">Remote LLM worker status indicator.</p>
         </div>
     </div>
 
-    <div id="armory" class="tab-content hidden bg-[#0f1115] border border-zinc-800 p-8 rounded-xl shadow-2xl">
-        <div class="flex justify-between items-center border-b border-zinc-800 pb-4 mb-6">
+    <!-- ARMORY TAB -->
+    <div id="armory" class="tab-content hidden liquid-glass p-8 rounded-2xl relative z-10">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-white/10 pb-6 mb-8 gap-4">
             <div>
-                <h3 class="text-2xl font-bold text-white">Classified Armory</h3>
-                <p class="text-zinc-500 text-sm mt-1">Total Payloads: {{ payloads|length }} / 100 Cap</p>
+                <h3 class="text-3xl font-bold text-white tracking-tight">Classified Armory</h3>
+                <p class="text-white/40 text-sm mt-2 font-mono">Capacity: {{ payloads|length }} / 100 Payloads</p>
             </div>
             
-            <div class="flex gap-3">
-                <button onclick="window.location.href='/admin?tab=armory'" class="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg font-bold transition border border-zinc-700">🔄 Refresh</button>
+            <div class="flex flex-wrap gap-3">
+                <button onclick="window.location.href='/admin?tab=armory'" class="liquid-glass hover:bg-white/10 text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">🔄 Sync</button>
                 <form method="post" action="/admin/force_harvest">
-                    <button type="submit" onclick="this.innerHTML='Generating...'; this.classList.add('opacity-50');" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold transition shadow-[0_0_15px_rgba(147,51,234,0.3)]">⚡ Force Generation</button>
+                    <button type="submit" onclick="this.innerHTML='Compiling...'; this.classList.add('opacity-50');" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/40 px-5 py-2.5 rounded-xl font-bold transition-all text-sm shadow-[0_0_15px_rgba(147,51,234,0.2)]">⚡ Force Generation</button>
                 </form>
-                <form method="post" action="/admin/purge_armory" onsubmit="return confirm('WARNING: This will instantly delete all payloads. Proceed?');">
-                    <button type="submit" class="bg-red-900/30 text-red-500 border border-red-900 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg font-bold transition">⚠️ PURGE ALL</button>
+                <form method="post" action="/admin/purge_armory" onsubmit="return confirm('CRITICAL WARNING: This will vaporize all payloads globally. Proceed?');">
+                    <button type="submit" class="bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-600 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">⚠️ PURGE</button>
                 </form>
             </div>
         </div>
         
         {% if payloads %}
-            <div class="space-y-8 max-h-[500px] overflow-y-auto pr-2">
+            <div class="space-y-8 max-h-[600px] overflow-y-auto pr-4">
             {% for raid_type, type_payloads in payloads|groupby('raid_type') %}
-                <div>
-                    <h4 class="text-white font-bold uppercase tracking-widest text-sm mb-3 border-b border-zinc-800 pb-2 flex justify-between">
-                        <span>{{ raid_type|replace('_', ' ') }} PROTOCOLS</span>
-                        <span class="text-zinc-500 text-xs">{{ type_payloads|length }} Stored</span>
+                <div class="fade-in">
+                    <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 flex justify-between">
+                        <span class="text-red-400">{{ raid_type|replace('_', ' ') }} PROTOCOLS</span>
+                        <span class="bg-white/5 px-2 py-1 rounded">{{ type_payloads|length }} Stored</span>
                     </h4>
-                    <div class="space-y-3">
+                    <div class="grid gap-3">
                     {% for p in type_payloads %}
-                        <div class="bg-[#050505] border border-zinc-800 p-4 rounded-lg flex justify-between items-center gap-4">
+                        <div class="bg-black/40 border border-white/5 hover:border-white/20 p-5 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-300">
                             <div class="flex-1">
-                                <span class="text-xs {% if p.raid_type == 'innocent' %}bg-emerald-900/30 text-emerald-500{% else %}bg-red-900/30 text-red-500{% endif %} px-2 py-1 rounded font-bold uppercase">{{ p.raid_type }}</span>
-                                <span class="text-zinc-300 font-bold ml-2">{{ p.username }}</span>
-                                <p class="text-zinc-400 font-mono text-sm mt-2">"{{ p.spam_message }}"</p>
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-[10px] {% if p.raid_type == 'innocent' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
+                                    <span class="text-white font-bold">{{ p.username }}</span>
+                                </div>
+                                <p class="text-white/50 font-mono text-sm leading-relaxed">"{{ p.spam_message }}"</p>
                             </div>
                             <form method="post" action="/admin/delete_payload/{{ p._id }}">
-                                <button class="text-red-500 hover:bg-red-900/30 px-4 py-2 rounded text-sm font-bold transition">Delete</button>
+                                <button class="text-red-400/50 hover:text-red-400 hover:bg-red-500/10 px-4 py-2 rounded-lg text-sm font-bold transition-all">Delete</button>
                             </form>
                         </div>
                     {% endfor %}
@@ -114,63 +147,68 @@
             {% endfor %}
             </div>
         {% else %}
-            <p class="text-zinc-500 italic text-center py-10">Armory is completely empty. Click 'Force Generation' and refresh.</p>
+            <div class="text-center py-20 border border-dashed border-white/10 rounded-2xl">
+                <span class="text-4xl mb-4 block">🕸️</span>
+                <p class="text-white/40 italic">Armory is hollow. Initialize generation protocol.</p>
+            </div>
         {% endif %}
     </div>
 
-    <div id="db" class="tab-content hidden">
-        <div class="flex h-[600px] border border-zinc-800 rounded-xl overflow-hidden bg-[#0a0a0c] shadow-2xl">
+    <!-- DB TAB -->
+    <div id="db" class="tab-content hidden relative z-10">
+        <div class="flex flex-col md:flex-row h-[700px] liquid-glass rounded-2xl overflow-hidden shadow-2xl border border-white/10">
             
-            <div class="w-1/3 border-r border-zinc-800 overflow-y-auto p-4 bg-[#0f1115]">
-                <h3 class="text-zinc-500 font-bold text-xs uppercase tracking-widest mb-4 flex justify-between items-center">
-                    Cluster: Sylas_DB
-                    <span class="bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded text-[10px]">CONNECTED</span>
+            <div class="w-full md:w-1/3 border-r border-white/5 overflow-y-auto p-6 bg-black/20">
+                <h3 class="text-white/40 font-bold text-xs uppercase tracking-widest mb-6 flex justify-between items-center">
+                    Cluster: Sylas_Core
+                    <span class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[10px] animate-pulse">UPLINKED</span>
                 </h3>
                 
                 <div class="space-y-4">
                     {% for coll_name, docs in db_structure.items() %}
-                    <div>
-                        <div class="flex justify-between items-center bg-zinc-900/50 p-2 rounded cursor-pointer hover:bg-zinc-800 transition group" onclick="document.getElementById('folder-{{ coll_name }}').classList.toggle('hidden')">
-                            <span class="text-white font-semibold text-sm flex items-center gap-2">📂 {{ coll_name }}</span>
-                            <span class="text-xs text-zinc-500">{{ docs|length }} docs</span>
+                    <div class="bg-white/5 rounded-xl border border-white/5 overflow-hidden">
+                        <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-white/5 transition-colors group" onclick="document.getElementById('folder-{{ coll_name }}').classList.toggle('hidden')">
+                            <span class="text-white/80 font-semibold text-sm flex items-center gap-2 group-hover:text-white transition-colors">📁 {{ coll_name }}</span>
+                            <span class="text-xs text-white/30 font-mono">{{ docs|length }} docs</span>
                         </div>
                         
-                        <div id="folder-{{ coll_name }}" class="hidden pl-6 mt-2 space-y-1">
-                            <form method="post" action="/admin/db/drop_collection/{{ coll_name }}" onsubmit="return confirm('SUDO WARNING: This deletes the entire collection folder. Proceed?');">
-                                <button type="submit" class="text-[10px] uppercase font-black text-red-500 hover:bg-red-900/30 px-2 py-1 rounded w-full text-left transition mb-2">⚠️ Drop Collection</button>
+                        <div id="folder-{{ coll_name }}" class="hidden bg-black/40 p-2 space-y-1 border-t border-white/5">
+                            <form method="post" action="/admin/db/drop_collection/{{ coll_name }}" onsubmit="return confirm('SUDO WARNING: Erasing collection matrix. Proceed?');">
+                                <button type="submit" class="text-[10px] uppercase font-black text-red-500/70 hover:bg-red-500/20 hover:text-red-400 px-3 py-2 rounded w-full text-left transition-all mb-1">⚠️ Drop Target</button>
                             </form>
                             
                             {% for doc in docs %}
-                            <div class="text-zinc-400 text-xs py-1.5 px-2 hover:bg-zinc-800 hover:text-white rounded cursor-pointer transition truncate" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
+                            <div class="text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg cursor-pointer transition-all truncate" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
                                 📄 {{ doc._id }}
                             </div>
                             {% endfor %}
-                            {% if not docs %}<div class="text-zinc-600 text-xs italic pl-2">Empty</div>{% endif %}
+                            {% if not docs %}<div class="text-white/20 text-xs italic px-3 py-2">Void sector</div>{% endif %}
                         </div>
                     </div>
                     {% endfor %}
                 </div>
             </div>
 
-            <div class="w-2/3 flex flex-col bg-[#050505] relative">
-                <div id="editor-empty" class="absolute inset-0 flex items-center justify-center flex-col text-zinc-600">
-                    <span class="text-6xl mb-4">🗄️</span>
-                    <p class="font-bold">Select a document to edit.</p>
+            <div class="w-full md:w-2/3 flex flex-col bg-[#030305]/80 relative backdrop-blur-3xl">
+                <div id="editor-empty" class="absolute inset-0 flex items-center justify-center flex-col text-white/20">
+                    <span class="text-6xl mb-6 opacity-50 block animate-pulse">⟁</span>
+                    <p class="font-mono text-sm tracking-widest uppercase">Awaiting Selection</p>
                 </div>
                 
-                <div id="editor-active" class="hidden flex-col h-full">
-                    <div class="bg-[#141519] border-b border-zinc-800 p-3 flex justify-between items-center">
-                        <span id="editor-title" class="text-white font-mono text-sm font-bold">file.json</span>
-                        <div class="flex gap-2">
-                            <form id="form-delete-doc" method="post" action="" onsubmit="return confirm('Delete this document forever?');">
-                                <button type="submit" class="bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition">Delete</button>
+                <div id="editor-active" class="hidden flex-col h-full fade-in">
+                    <div class="bg-white/5 border-b border-white/10 p-4 flex justify-between items-center backdrop-blur-md">
+                        <span id="editor-title" class="text-cyan-400 font-mono text-sm font-bold tracking-wide">file.json</span>
+                        <div class="flex gap-3">
+                            <form id="form-delete-doc" method="post" action="" onsubmit="return confirm('Permanently shred this document?');">
+                                <button type="submit" class="bg-red-900/20 border border-red-900/50 text-red-400 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg text-xs font-bold transition-all">Shred</button>
                             </form>
-                            <button form="form-save-doc" type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded text-xs font-bold transition shadow-lg shadow-emerald-900/20">Save JSON</button>
+                            <button form="form-save-doc" type="submit" class="bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500 hover:text-white px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)]">Compile JSON</button>
                         </div>
                     </div>
                     
-                    <form id="form-save-doc" method="post" action="" class="flex-1 flex flex-col p-4">
-                        <textarea id="editor-textarea" name="raw_json" class="flex-1 w-full bg-[#0a0a0c] text-emerald-400 font-mono text-sm p-4 rounded-xl border border-zinc-800 focus:border-red-500 focus:outline-none resize-none"></textarea>
+                    <form id="form-save-doc" method="post" action="" class="flex-1 flex flex-col p-4 relative">
+                        <div class="absolute inset-0 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03]"></div>
+                        <textarea id="editor-textarea" name="raw_json" class="flex-1 w-full bg-black/40 text-[#0ff] font-mono text-[13px] leading-loose p-6 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 resize-none shadow-inner transition-colors z-10"></textarea>
                     </form>
                 </div>
             </div>
@@ -184,7 +222,7 @@
             document.getElementById('editor-active').classList.remove('hidden');
             document.getElementById('editor-active').classList.add('flex');
             
-            document.getElementById('editor-title').innerText = collection + ' / ' + docId + '.json';
+            document.getElementById('editor-title').innerText = collection + ' // ' + docId + '.json';
             document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
             
             document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
