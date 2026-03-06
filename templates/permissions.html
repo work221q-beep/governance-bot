@@ -565,6 +565,51 @@
                     hasUnsavedChanges = false;
                 });
             }
+
+            // Auto-refresh data every 2 seconds
+            setInterval(() => {
+                const modModal = document.getElementById('mod-modal');
+                const channelModal = document.getElementById('channel-modal');
+                const isModModalOpen = modModal && !modModal.classList.contains('hidden');
+                const isChannelModalOpen = channelModal && !channelModal.classList.contains('hidden');
+                
+                if (!hasUnsavedChanges && !isModModalOpen && !isChannelModalOpen) {
+                    fetch(window.location.href)
+                        .then(response => response.text())
+                        .then(html => {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(html, 'text/html');
+                            
+                            const tabs = ['roles', 'users', 'bots', 'channels'];
+                            tabs.forEach(tab => {
+                                const currentTab = document.getElementById(tab);
+                                const newTab = doc.getElementById(tab);
+                                if (currentTab && newTab) {
+                                    const classes = currentTab.className;
+                                    currentTab.innerHTML = newTab.innerHTML;
+                                    currentTab.className = classes;
+                                }
+                            });
+                            
+                            // Re-bind roles form listeners
+                            const newRolesForm = document.getElementById('roles-form');
+                            if (newRolesForm) {
+                                originalFormState = new FormData(newRolesForm);
+                                newRolesForm.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                                    checkbox.addEventListener('change', () => {
+                                        hasUnsavedChanges = true;
+                                        const deployBar = document.getElementById('deploy-bar');
+                                        if(deployBar) {
+                                            deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
+                                            deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
+                                        }
+                                    });
+                                });
+                            }
+                        })
+                        .catch(err => console.error('Auto-refresh failed:', err));
+                }
+            }, 2000);
         });
     </script>
 </body>

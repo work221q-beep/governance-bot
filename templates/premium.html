@@ -131,9 +131,12 @@
                         <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl">✓</span> 4-Hour Cooldown Matrix</li>
                     </ul>
                     
-                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-xl transition-all relative z-10 uppercase tracking-widest text-sm">
-                        Acquire License
-                    </button>
+                    <form method="post" action="/server/{{ guild_id }}/buy_premium">
+                        <input type="hidden" name="plan" value="weekly">
+                        <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-xl transition-all relative z-10 uppercase tracking-widest text-sm">
+                            Acquire License
+                        </button>
+                    </form>
                 </div>
 
                 <!-- Premium Plan -->
@@ -154,15 +157,41 @@
                         <li class="flex items-center gap-4"><span class="text-purple-400 text-xl drop-shadow-[0_0_5px_#7000ff]">✦</span> Priority AI Compute Queue</li>
                     </ul>
                     
-                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full cyber-btn font-black py-4 rounded-xl uppercase tracking-widest text-sm relative z-10">
-                        Acquire License
-                    </button>
+                    <form method="post" action="/server/{{ guild_id }}/buy_premium">
+                        <input type="hidden" name="plan" value="monthly">
+                        <button type="submit" class="w-full cyber-btn font-black py-4 rounded-xl uppercase tracking-widest text-sm relative z-10">
+                            Acquire License
+                        </button>
+                    </form>
                 </div>
 
             </div>
 
             <div class="text-center mt-16">
                 <p class="text-white/30 font-bold uppercase tracking-[0.3em] text-[10px] font-mono">Yearly Enterprise Matrix — Compiling...</p>
+            </div>
+            
+            <!-- License Key Redemption -->
+            <div class="mt-16 w-full max-w-2xl mx-auto liquid-glass rounded-2xl p-8 border border-white/10">
+                <h3 class="text-xl font-bold text-white mb-2">Redeem License Key</h3>
+                <p class="text-white/40 text-sm mb-6 font-mono">Enter a valid Sylas Premium license key to activate your subscription.</p>
+                
+                {% if request.query_params.get('error') %}
+                <div class="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-6 text-sm font-bold">
+                    {{ request.query_params.get('error') }}
+                </div>
+                {% endif %}
+                
+                {% if request.query_params.get('success') %}
+                <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-xl mb-6 text-sm font-bold">
+                    License key redeemed successfully! Premium features are now active.
+                </div>
+                {% endif %}
+                
+                <form method="post" action="/server/{{ guild_id }}/redeem_key" class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" name="license_key" placeholder="SYLAS-XXXXXXXXXXXXXXXXXXXXXXXX" required class="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white font-mono focus:border-[#ff003c] focus:outline-none focus:ring-1 focus:ring-[#ff003c] transition-colors">
+                    <button type="submit" class="cyber-btn px-6 py-3 rounded-xl font-bold uppercase tracking-widest text-sm whitespace-nowrap">Redeem</button>
+                </form>
             </div>
         </div>
     </main>
