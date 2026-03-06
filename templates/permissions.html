@@ -295,7 +295,7 @@
             <div id="roles" class="tab-content">
                 <form id="roles-form" method="post" action="/server/{{ guild_id }}/sync" class="space-y-6 pb-32">
                     {% for role in roles %}
-                    <div class="liquid-glass border {% if role.is_everyone %}border-[#ff003c]/50 shadow-[0_0_30px_rgba(255,0,60,0.15)]{% else %}border-white/5 hover:border-white/20{% endif %} rounded-2xl overflow-hidden transition-all duration-300 {% if not role.can_edit %}opacity-60 grayscale-[50%]{% endif %}">
+                    <div class="liquid-glass border {% if role.is_everyone %}border-[#ff003c]/50 shadow-[0_0_30px_rgba(255,0,60,0.15)]{% else %}border-white/5 hover:border-white/20{% endif %} rounded-2xl overflow-hidden transition-all duration-300 {% if not role.can_edit %}opacity-80{% endif %}">
                         <div class="bg-black/40 px-6 py-4 flex justify-between items-center {% if role.can_edit %}cursor-pointer hover:bg-white/[0.02]{% endif %} select-none" {% if role.can_edit %}onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')"{% endif %}>
                             <div class="flex items-center gap-4">
                                 {% if not role.is_everyone %}<span class="w-4 h-4 rounded-full shadow-inner border border-white/20" style="background-color: {{ role.color }};"></span>{% endif %}
@@ -307,7 +307,7 @@
                             </div>
                             <div class="flex items-center gap-4">
                                 {% if not role.can_edit %}
-                                <span class="text-[10px] text-red-400/80 font-mono bg-red-900/20 px-3 py-1 rounded border border-red-500/20">🔒 {{ role.edit_reason }}</span>
+                                <span class="text-xs text-red-400 font-mono bg-red-500/10 px-3 py-1.5 rounded border border-red-500/30">🔒 {{ role.edit_reason }}</span>
                                 {% else %}
                                 <span class="text-xs font-mono text-white/30 bg-white/5 px-2 py-1 rounded border border-white/5">{{ role.current|length }} Perms</span>
                                 <svg class="w-5 h-5 text-white/30 transition-transform duration-300 transform group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
