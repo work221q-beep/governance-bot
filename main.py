@@ -98,6 +98,17 @@ async def permissions_manager(request: Request, guild_id: str):
     bot_in_guild = True if guild else False
     guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
 
+    has_premium = await is_guild_premium(guild_id)
+    
+    user_power = "Moderator"
+    for g in session_user.get("guilds", []):
+        if str(g["id"]) == str(guild_id):
+            if g.get("owner"):
+                user_power = "Owner"
+            elif (int(g.get("permissions", 0)) & 0x8) == 0x8:
+                user_power = "Administrator"
+            break
+
     roles, users, bots, channels = [], [], [],[]
     
     if bot_in_guild:
@@ -125,7 +136,8 @@ async def permissions_manager(request: Request, guild_id: str):
     return templates.TemplateResponse("permissions.html", {
         "request": request, "guild_id": guild_id, "roles": roles, "users": users, 
         "bots": bots, "channels": channels, "guild_name": guild_name,
-        "user": session_user, "bot_in_guild": bot_in_guild
+        "user": session_user, "bot_in_guild": bot_in_guild,
+        "has_premium": has_premium, "user_power": user_power
     })
 
 # --- FIX: ADDED MISSING CORE INFRASTRUCTURE SYNC ROUTES ---

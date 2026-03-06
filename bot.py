@@ -49,7 +49,7 @@ class RaidSelect(discord.ui.Select):
         allowed, time_left = await check_and_set_cooldown(guild_id, selected_raid, is_prem)
         if not allowed:
             tier_text = "4-Hour" if is_prem else "24-Hour"
-            upsell = "\n\n💎 **Skip the wait.** Upgrade to Sylas Premium to reduce cooldowns to 4 hours."
+            upsell = "\n\n🕒 **Skip the wait.** Upgrade to Sylas Premium to reduce cooldowns to 4 hours."
             
             if is_prem:
                 await interaction.response.send_message(
