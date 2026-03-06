@@ -34,9 +34,9 @@
                 {% if user.avatar %}
                     <img src="{{ user.avatar }}" class="w-8 h-8 rounded-full border border-white/20">
                 {% else %}
-                    <div class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-bold text-xs">{{ user.username[0]|upper }}</div>
+                    <div class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-bold text-xs">{{ (user.global_name or user.username)[0]|upper }}</div>
                 {% endif %}
-                <span class="font-bold text-sm text-white/80">{{ user.username }}</span>
+                <span class="font-bold text-sm text-white/80">{{ user.global_name or user.username }}</span>
             </div>
             <a href="/logout" class="text-white/40 hover:text-red-500 text-sm font-bold uppercase tracking-widest transition-colors">Disconnect</a>
         </div>
