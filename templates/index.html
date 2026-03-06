@@ -1,39 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>SYLAS | Red Team AI</title>
+    <title>SYLAS | AI Red Team</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #fff; }
-        .bg-grid { background-size: 40px 40px; background-image: linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px); }
+        :root { --red-glow: #ff003c; --purple-glow: #7000ff; }
+        body { font-family: 'Space Grotesk', sans-serif; background-color: #030305; color: #fff; overflow-x: hidden; margin: 0; }
+        
+        /* Viscous Animated Background */
+        .liquid-bg { position: fixed; inset: 0; z-index: -2; background: #030305; overflow: hidden; }
+        .blob { position: absolute; filter: blur(90px); border-radius: 50%; opacity: 0.6; animation: drift 20s infinite alternate ease-in-out; }
+        .blob-1 { top: -10%; left: -10%; width: 50vw; height: 50vw; background: var(--red-glow); animation-delay: 0s; }
+        .blob-2 { bottom: -20%; right: -10%; width: 60vw; height: 60vw; background: var(--purple-glow); animation-delay: -5s; }
+        .blob-3 { top: 40%; left: 40%; width: 40vw; height: 40vw; background: #1a0033; animation-delay: -10s; }
+        @keyframes drift { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(10%, 15%) scale(1.2); } }
+        
+        /* Grid Overlay */
+        .cyber-grid { position: fixed; inset: 0; z-index: -1; background-image: linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px); background-size: 50px 50px; mask-image: radial-gradient(circle at center, black, transparent 80%); -webkit-mask-image: radial-gradient(circle at center, black, transparent 80%); pointer-events: none; }
+
+        /* Liquid Glass Card */
+        .liquid-glass { background: rgba(10, 10, 15, 0.4); backdrop-filter: blur(40px) saturate(150%); -webkit-backdrop-filter: blur(40px) saturate(150%); border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 20px rgba(255,255,255,0.02), 0 20px 40px rgba(0,0,0,0.5); }
+
+        /* Glitch Text */
+        .glitch-text { position: relative; font-weight: 900; text-transform: uppercase; letter-spacing: -0.05em; }
+        .glitch-text::before, .glitch-text::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.8; }
+        .glitch-text::before { color: #0ff; z-index: -1; transform: translate(-2px, 2px); }
+        .glitch-text::after { color: var(--red-glow); z-index: -2; transform: translate(2px, -2px); }
+
+        /* Cyber Button */
+        .cyber-btn { position: relative; overflow: hidden; background: transparent; border: 1px solid var(--red-glow); box-shadow: 0 0 15px rgba(255,0,60,0.3); transition: all 0.3s; }
+        .cyber-btn::before { content: ''; position: absolute; inset: 0; background: var(--red-glow); transform: scaleX(0); transform-origin: right; transition: transform 0.4s ease; z-index: -1; }
+        .cyber-btn:hover::before { transform: scaleX(1); transform-origin: left; }
+        .cyber-btn:hover { box-shadow: 0 0 30px rgba(255,0,60,0.6); color: #fff; }
     </style>
 </head>
-<body class="bg-grid min-h-screen flex flex-col">
-    <nav class="border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur sticky top-0 z-50">
+<body class="flex flex-col min-h-screen">
+    
+    <div class="liquid-bg">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+    <div class="cyber-grid"></div>
+
+    <nav class="liquid-glass sticky top-0 z-50 w-full border-b-0">
         <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-            <div class="text-3xl font-black tracking-widest italic">SYLAS<span class="text-red-600">.AI</span></div>
-            <div class="space-x-8 font-semibold">
+            <div class="text-3xl font-black tracking-tighter flex items-center gap-2">
+                <span class="w-3 h-3 bg-[#ff003c] rounded-full animate-pulse shadow-[0_0_10px_#ff003c]"></span>
+                SYLAS<span class="text-[#ff003c]">.AI</span>
+            </div>
+            <div>
                 {% if user %}
-                    <a href="/dashboard" class="text-red-500 hover:underline">Launch App</a>
+                    <a href="/dashboard" class="text-white hover:text-[#0ff] transition-colors font-bold tracking-wide uppercase text-sm">Access Uplink &rarr;</a>
                 {% else %}
-                    <a href="/login" class="bg-white text-black py-3 px-8 rounded-full hover:bg-zinc-200 transition">Login</a>
+                    <a href="/login" class="bg-white text-black px-6 py-2 rounded-none font-bold uppercase tracking-widest text-xs hover:bg-[#ff003c] hover:text-white transition-all duration-300">Authenticate</a>
                 {% endif %}
             </div>
         </div>
     </nav>
 
-    <main class="flex-1 flex flex-col items-center justify-center text-center px-6">
-        <h1 class="text-6xl md:text-8xl font-black tracking-tighter mb-8 max-w-5xl">
-            Stress Test Your Discord with an <span class="text-red-600">AI Red Team</span>
+    <main class="flex-1 flex flex-col items-center justify-center px-6 text-center z-10 relative mt-[-40px]">
+        
+        <div class="liquid-glass px-4 py-1.5 rounded-full border border-[#ff003c]/30 text-[#ff003c] text-xs font-bold uppercase tracking-[0.3em] mb-8 animate-bounce">
+            Trial available
+        </div>
+
+        <h1 class="text-6xl md:text-[7rem] leading-none mb-6 glitch-text" data-text="Weaponize Your Discord.">
+            Weaponize Your<br>
+            <span class="text-transparent bg-clip-text bg-gradient-to-br from-white to-gray-500">Discord.</span>
         </h1>
-        <p class="text-xl text-zinc-400 mb-12 max-w-2xl font-medium leading-relaxed">
-            Automated penetration testing for high-traffic servers. Identify permission leaks, test automod evasion, and measure moderator latency in a controlled chaos environment.
+        
+        <p class="text-xl md:text-2xl text-gray-400 max-w-3xl mb-12 font-light tracking-wide">
+            Deploy hyper-realistic AI threat actors. Expose permission vulnerabilities, train your mod team in real-time, and <strong class="text-white">secure your realm</strong>.
         </p>
-        <div class="flex gap-6">
-            <a href="/invite" class="bg-red-600 py-5 px-12 rounded-2xl font-black text-xl hover:bg-red-700 transition shadow-2xl shadow-red-900/40">ADD TO DISCORD</a>
-            <a href="/dashboard" class="bg-zinc-800 py-5 px-12 rounded-2xl font-black text-xl hover:bg-zinc-700 transition">OPEN DASHBOARD</a>
+
+        <div class="flex flex-col sm:flex-row gap-6">
+            <a href="/invite" class="cyber-btn text-white font-black uppercase tracking-widest text-sm px-12 py-5 rounded-none">
+                Initialize Engine
+            </a>
+            <a href="/dashboard" class="liquid-glass text-white font-bold uppercase tracking-widest text-sm px-12 py-5 hover:bg-white/10 transition-all">
+                Enter Terminal
+            </a>
         </div>
     </main>
+
 </body>
 </html>
