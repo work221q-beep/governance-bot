@@ -76,6 +76,11 @@ async def dashboard(request: Request):
     
     session_user = serializer.loads(user_cookie)
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
+    
+    # Check premium status for all guilds
+    for guild in session_user.get("guilds", []):
+        guild["is_premium"] = await is_guild_premium(guild["id"])
+        
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
 
 @app.get("/server/{guild_id}")

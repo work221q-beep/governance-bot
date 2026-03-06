@@ -39,7 +39,7 @@ class RaidSelect(discord.ui.Select):
         is_prem = await is_guild_premium(guild_id)
         if selected_raid in PREMIUM_FEATURES and not is_prem:
             await interaction.response.send_message(
-                "🛑 **This is a Premium Security Feature.**\n\nPlease purchase a Sylas Premium license for this server to become an Alpha Tester and unlock advanced Red Team simulations.",
+                "🛑 **This is a Premium Security Feature.**\n\nPlease purchase a Sylas Premium license for this server to unlock advanced Red Team simulations.",
                 ephemeral=True, 
                 view=PremiumUpgradeView(guild_id)
             )
@@ -49,10 +49,19 @@ class RaidSelect(discord.ui.Select):
         allowed, time_left = await check_and_set_cooldown(guild_id, selected_raid, is_prem)
         if not allowed:
             tier_text = "4-Hour" if is_prem else "24-Hour"
-            await interaction.response.send_message(
-                f"⏳ **Protocol on Cooldown.**\n\nYour server is currently on a {tier_text} cooldown for the `{selected_raid}` module to prevent API abuse.\n**Time Remaining:** {time_left}",
-                ephemeral=True
-            )
+            upsell = "\n\n💎 **Skip the wait.** Upgrade to Sylas Premium to reduce cooldowns to 4 hours."
+            
+            if is_prem:
+                await interaction.response.send_message(
+                    f"⏳ **Protocol on Cooldown.**\n\nYour server is currently on a {tier_text} cooldown for the `{selected_raid}` module to prevent API abuse.\n**Time Remaining:** {time_left}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"⏳ **Protocol on Cooldown.**\n\nYour server is currently on a {tier_text} cooldown for the `{selected_raid}` module to prevent API abuse.\n**Time Remaining:** {time_left}{upsell}",
+                    ephemeral=True,
+                    view=PremiumUpgradeView(guild_id)
+                )
             return
 
         # 3. EXECUTE
