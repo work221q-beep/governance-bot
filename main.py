@@ -125,7 +125,7 @@ async def redirect_to_permissions(guild_id: str):
     return RedirectResponse(f"/server/{guild_id}/permissions")
 
 @app.get("/server/{guild_id}/permissions")
-async def permissions_manager(request: Request, guild_id: str):
+async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None):
     user_cookie = request.cookies.get("session")
     if not user_cookie: return RedirectResponse("/login")
     
@@ -179,7 +179,8 @@ async def permissions_manager(request: Request, guild_id: str):
         "bots": bots, "channels": channels, "guild_name": guild_name,
         "user": session_user, "bot_in_guild": bot_in_guild,
         "has_premium": has_premium, "user_power": user_power,
-        "display_name": display_name, "user_avatar": user_avatar
+        "display_name": display_name, "user_avatar": user_avatar,
+        "active_tab": tab, "error": error, "error_title": error_title
     })
 
 # --- FIX: ADDED MISSING CORE INFRASTRUCTURE SYNC ROUTES ---
@@ -218,7 +219,20 @@ async def apply_sync_post(request: Request, guild_id: str):
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/sync")
     
+    session_user = serializer.loads(user_cookie)
+    web_member = guild.get_member(int(session_user.get("id")))
+    
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_roles and guild.owner_id != web_member.id):
+        return RedirectResponse(f"/server/{guild_id}/permissions?error=You do not have permission to manage roles.&error_title=Access Denied", status_code=303)
+    
     form_data = await request.form()
+    
+    managed_perms = [
+        "administrator", "manage_guild", "manage_roles", "manage_channels", 
+        "kick_members", "ban_members", "send_messages", "embed_links", 
+        "attach_files", "manage_messages", "mention_everyone", "manage_webhooks", 
+        "connect", "speak", "mute_members", "move_members", "manage_events", "view_audit_log"
+    ]
     
     for role in guild.roles:
         # Safety constraint: Do not edit roles higher than the bot
@@ -227,9 +241,9 @@ async def apply_sync_post(request: Request, guild_id: str):
             
         perms_list = form_data.getlist(f"perms_{role.id}")
         
-        new_perms = discord.Permissions()
-        for p in perms_list:
-            try: setattr(new_perms, p, True)
+        new_perms = discord.Permissions(role.permissions.value)
+        for p in managed_perms:
+            try: setattr(new_perms, p, p in perms_list)
             except: pass
         
         # Only issue discord API call if permissions actually changed
@@ -256,9 +270,23 @@ async def premium_manager(request: Request, guild_id: str):
     # Check database for active sub
     has_premium = await is_guild_premium(int(guild_id))
 
+    user_power = "Moderator"
+    for g in session_user.get("guilds", []):
+        if str(g["id"]) == str(guild_id):
+            if g.get("owner"):
+                user_power = "Owner"
+            elif (int(g.get("permissions", 0)) & 0x8) == 0x8:
+                user_power = "Administrator"
+            break
+
+    web_member = guild.get_member(int(session_user.get("id"))) if bot_in_guild else None
+    display_name = web_member.display_name if web_member else (session_user.get("global_name") or session_user.get("username"))
+    user_avatar = str(web_member.display_avatar.url) if web_member and web_member.display_avatar else session_user.get("avatar")
+
     return templates.TemplateResponse("premium.html", {
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
-        "user": session_user, "has_premium": has_premium
+        "user": session_user, "has_premium": has_premium,
+        "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar
     })
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
@@ -281,19 +309,13 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     web_member = guild.get_member(int(session_user.get("id")))
     
+    tab = "bots" if target and target.bot else "users"
+    
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role:
-        return HTMLResponse(
-            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-            f"<h2 style='color:#ef4444; font-weight: 900;'>Admin Access Denied</h2>"
-            f"<p>You cannot {action} a user with an equal or higher role.</p>"
-            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
             
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role:
-        return HTMLResponse(
-            f"<div style='background:#09090b; color:white; padding:40px; text-align:center; border: 1px solid #ef4444; border-radius: 10px; max-width: 500px; margin: 50px auto;'>"
-            f"<h2 style='color:#ef4444; font-weight: 900;'>Bot Hierarchy Error</h2>"
-            f"<p>Sylas cannot {action} <b>{target.name}</b>. The bot's role must be higher than the target's role.</p>"
-            f"<a href='/server/{guild_id}/permissions' style='color:white; text-decoration:underline;'>Return</a></div>", status_code=403)
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
             
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     
@@ -316,9 +338,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         elif action == "timeout": 
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
     except discord.Forbidden:
-        return HTMLResponse("Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.", status_code=403)
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.&error_title=Permission Denied", status_code=303)
             
-    tab = "bots" if target.bot else "users"
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/override")
@@ -346,7 +367,7 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
         try:
             await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
         except discord.Forbidden:
-            return HTMLResponse("Access Denied.", status_code=403)
+            return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to manage this channel.&error_title=Channel Access Denied", status_code=303)
             
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
