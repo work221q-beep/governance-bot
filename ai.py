@@ -117,11 +117,14 @@ async def harvest_payloads(raid_type: str):
         if json_match:
             try:
                 payloads = json.loads(json_match.group(0))
+                batch_id = f"SYLAS-GEN-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{random.randint(1000,9999)}"
                 inserts = [{
+                    "payload_id": f"SYLAS-PLD-{raid_type.upper()}-{random.randint(10000,99999)}",
                     "username": str(p["username"])[:30],
                     "spam_message": str(p["spam_message"]),
                     "raid_type": raid_type,
                     "model": "hybrid_provider_pool",
+                    "batch_id": batch_id,
                     "created_at": datetime.utcnow()
                 } for p in payloads if "username" in p and "spam_message" in p]
                 

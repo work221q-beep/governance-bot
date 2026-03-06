@@ -6,7 +6,7 @@ from itsdangerous import URLSafeSerializer
 from bson import ObjectId
 from bot import start_bot, bot, engine_state
 from ai import harvest_loop, harvest_payloads, parallel_harvest_sweep
-from db import init_indexes, payload_armory, vuln_state, server_configs
+from db import init_indexes, payload_armory
 from premium import is_guild_premium # NEW: Import Premium verification
 
 app = FastAPI()
@@ -33,9 +33,10 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
 
 @app.get("/login")
-async def login():
+async def login(next_url: str = None):
+    state = f"login_{next_url}" if next_url else "login"
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds"
+    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
     return RedirectResponse(url)
 
 @app.get("/logout")
@@ -84,7 +85,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             """)
 
     if error:
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url="/")
     if not code:
         return RedirectResponse(url="/")
 
@@ -100,7 +101,13 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     manageable_guilds = [g for g in guilds if g["owner"] or (int(g["permissions"]) & 0x8) == 0x8]
     avatar_url = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png" if user.get("avatar") else None
     
-    response = RedirectResponse(url="/dashboard")
+    redirect_url = "/dashboard"
+    if state and state.startswith("login_"):
+        parts = state.split("_", 1)
+        if len(parts) > 1 and parts[1]:
+            redirect_url = urllib.parse.unquote(parts[1])
+            
+    response = RedirectResponse(url=redirect_url)
     response.set_cookie("session", serializer.dumps({
         "id": user["id"], "username": user["username"], "global_name": user.get("global_name"), "avatar": avatar_url, "guilds": manageable_guilds
     }), httponly=True)
@@ -278,7 +285,8 @@ async def apply_sync_post(request: Request, guild_id: str):
 @app.get("/server/{guild_id}/premium")
 async def premium_manager(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
+    if not user_cookie: 
+        return RedirectResponse(f"/login?next_url={urllib.parse.quote(f'/server/{guild_id}/premium')}")
     
     session_user = serializer.loads(user_cookie)
     guild = bot.get_guild(int(guild_id))
@@ -307,6 +315,121 @@ async def premium_manager(request: Request, guild_id: str):
         "user": session_user, "has_premium": has_premium,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar
     })
+
+@app.post("/server/{guild_id}/redeem_key")
+async def redeem_key(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    form_data = await request.form()
+    key = form_data.get("license_key", "").strip()
+    
+    from premium import redeem_license_key
+    success = await redeem_license_key(guild_id, key)
+    
+    if success:
+        return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or expired license key.&error_title=Redemption Failed", status_code=303)
+
+@app.post("/server/{guild_id}/buy_premium")
+async def buy_premium(request: Request, guild_id: str):
+    import httpx, uuid, os
+    from db import payments
+    
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    session_user = serializer.loads(user_cookie)
+    
+    form_data = await request.form()
+    plan = form_data.get("plan", "monthly")
+    
+    amount = 5.00 if plan == "weekly" else 17.99
+    days = 7 if plan == "weekly" else 30
+    
+    order_id = f"SYLAS-{guild_id}-{uuid.uuid4().hex[:8]}"
+    base_url = os.getenv("APP_URL", "http://localhost:8000")
+    
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "amount": amount,
+            "currency": "USD",
+            "merchant_wallet": os.getenv("POLYGON_WALLET", "0x0000000000000000000000000000000000000000"),
+            "callback_url": f"{base_url}/api/webhooks/payment?chain2pay_order_id={order_id}",
+            "customer_email": session_user.get("email", "user@example.com"),
+            "provider": "stripe"
+        }
+        try:
+            resp = await client.post("https://chain2pay.cloud/api/generate", json=payload)
+            data = resp.json()
+            if data.get("success"):
+                c2p_order_id = data.get("order_id")
+                await payments.insert_one({
+                    "internal_order_id": order_id,
+                    "chain2pay_order_id": c2p_order_id,
+                    "guild_id": guild_id,
+                    "user_id": session_user.get("id"),
+                    "amount": amount,
+                    "days": days,
+                    "status": "pending",
+                    "ipn_token": data.get("ipn_token"),
+                    "created_at": datetime.datetime.utcnow()
+                })
+                return RedirectResponse(data["payment_url"], status_code=303)
+            else:
+                return RedirectResponse(f"/server/{guild_id}/premium?error=Payment generation failed: {data.get('error')}", status_code=303)
+        except Exception as e:
+            return RedirectResponse(f"/server/{guild_id}/premium?error=Payment service unavailable.", status_code=303)
+
+@app.get("/api/webhooks/payment")
+async def payment_webhook(request: Request):
+    import httpx
+    from db import payments
+    from premium import grant_premium, generate_license_key, redeem_license_key
+    
+    # The webhook sends chain2pay_order_id, txid_out, value_coin, coin
+    c2p_order_id = request.query_params.get("chain2pay_order_id")
+    if not c2p_order_id:
+        return {"status": "ignored"}
+        
+    payment = await payments.find_one({"chain2pay_order_id": c2p_order_id})
+    if not payment or payment["status"] == "paid":
+        return {"status": "ok"}
+        
+    ipn_token = payment.get("ipn_token")
+    if ipn_token:
+        async with httpx.AsyncClient() as client:
+            try:
+                # Anti-fraud: Verify payment status directly with Chain2Pay API
+                resp = await client.get(f"https://api.chain2pay.cloud/control/payment-status.php?ipn_token={ipn_token}")
+                data = resp.json()
+                if data.get("status") == "paid":
+                    # Verify amount paid is correct
+                    paid_amount = float(data.get("value_coin", 0))
+                    expected_amount = float(payment["amount"])
+                    
+                    if paid_amount >= expected_amount * 0.95: # 5% slippage tolerance for stablecoins
+                        await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "paid", "txid_out": data.get("txid_out")}})
+                        
+                        # Generate and redeem key automatically
+                        key = await generate_license_key(payment["days"])
+                        await redeem_license_key(payment["guild_id"], key)
+                        
+                        # Try to DM user
+                        try:
+                            user = await bot.fetch_user(int(payment["user_id"]))
+                            if user:
+                                guild = bot.get_guild(int(payment["guild_id"]))
+                                guild_name = guild.name if guild else "your server"
+                                await user.send(f"🎉 **Payment Successful!**\n\nYour subscription for **{guild_name}** has been activated.\n**License Key:** `{key}` (Auto-redeemed)\n**Duration:** {payment['days']} Days\n\nThank you for upgrading to Sylas Premium!")
+                        except:
+                            pass
+                    else:
+                        print(f"Payment amount mismatch: Expected {expected_amount}, got {paid_amount}")
+            except Exception as e:
+                print("Webhook verification failed:", e)
+                
+    return {"status": "ok"}
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
@@ -403,6 +526,7 @@ async def admin_panel(request: Request, key: str = None):
     payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
     db = payload_armory.database
     collection_names = await db.list_collection_names()
+    collection_names = [c for c in collection_names if not c.startswith("system.")]
     db_structure = {}
     for coll_name in collection_names:
         docs = await db[coll_name].find().sort("_id", -1).to_list(1000)
@@ -412,9 +536,37 @@ async def admin_panel(request: Request, key: str = None):
                 if isinstance(v, datetime.datetime): d[k] = v.isoformat()
         db_structure[coll_name] = docs
         
+    # Get all servers the bot is in
+    servers = []
+    from db import guild_cooldowns
+    for guild in bot.guilds:
+        is_prem = await is_guild_premium(guild.id)
+        # Get active cooldowns for this server
+        cds = await guild_cooldowns.find({"guild_id": str(guild.id)}).to_list(100)
+        cooldown_modules = [cd["raid_type"] for cd in cds]
+        servers.append({
+            "id": str(guild.id),
+            "name": guild.name,
+            "member_count": guild.member_count,
+            "is_premium": is_prem,
+            "cooldowns": cooldown_modules
+        })
+        
+    # Get license keys
+    from db import license_keys, payments
+    keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
+    for k in keys:
+        k["_id"] = str(k["_id"])
+        
+    # Get payments and revenue
+    all_payments = await payments.find().sort("created_at", -1).to_list(1000)
+    total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
+        
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "ai_status": "ONLINE", "db_structure": db_structure
+        "ai_status": "ONLINE", "db_structure": db_structure,
+        "servers": servers, "license_keys": keys,
+        "payments": all_payments, "total_revenue": total_revenue
     })
 
 @app.post("/admin/toggle_bot")
@@ -440,3 +592,85 @@ async def admin_purge_armory(request: Request):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
+
+@app.post("/admin/db/drop_collection/{coll_name}")
+async def admin_drop_collection(request: Request, coll_name: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    db = payload_armory.database
+    await db.drop_collection(coll_name)
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/db/delete_doc/{coll_name}/{doc_id}")
+async def admin_delete_doc(request: Request, coll_name: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    db = payload_armory.database
+    try:
+        await db[coll_name].delete_one({"_id": ObjectId(doc_id)})
+    except:
+        await db[coll_name].delete_one({"_id": doc_id})
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/db/edit_doc/{coll_name}/{doc_id}")
+async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form = await request.form()
+    raw_json = form.get("raw_json")
+    db = payload_armory.database
+    try:
+        data = json.loads(raw_json)
+        # Remove _id from data to avoid modifying immutable field
+        if "_id" in data:
+            del data["_id"]
+        try:
+            await db[coll_name].update_one({"_id": ObjectId(doc_id)}, {"$set": data})
+        except:
+            await db[coll_name].update_one({"_id": doc_id}, {"$set": data})
+    except Exception as e:
+        print(f"Error editing doc: {e}")
+    return RedirectResponse("/admin?tab=db", status_code=303)
+
+@app.post("/admin/generate_key")
+async def admin_generate_key(request: Request):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form = await request.form()
+    days = int(form.get("days", 30))
+    from premium import generate_license_key
+    await generate_license_key(days)
+    return RedirectResponse("/admin?tab=billing", status_code=303)
+
+@app.post("/admin/server/{guild_id}/toggle_premium")
+async def admin_toggle_premium(request: Request, guild_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    from premium import is_guild_premium, grant_premium
+    from db import guild_premium
+    is_prem = await is_guild_premium(int(guild_id))
+    if is_prem:
+        await guild_premium.delete_one({"guild_id": guild_id})
+    else:
+        await grant_premium(guild_id, 30) # Default 30 days
+    return RedirectResponse("/admin?tab=servers", status_code=303)
+
+@app.post("/admin/server/{guild_id}/reset_cooldowns")
+async def admin_reset_cooldowns(request: Request, guild_id: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    from db import guild_cooldowns
+    await guild_cooldowns.delete_many({"guild_id": guild_id})
+    return RedirectResponse("/admin?tab=servers", status_code=303)
+
+@app.post("/admin/server/{guild_id}/reset_cooldown/{module}")
+async def admin_reset_cooldown(request: Request, guild_id: str, module: str):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    from db import guild_cooldowns
+    await guild_cooldowns.delete_one({"guild_id": guild_id, "raid_type": module})
+    return RedirectResponse("/admin?tab=servers", status_code=303)
+
+@app.post("/admin/gift_premium")
+async def admin_gift_premium(request: Request):
+    if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
+    form = await request.form()
+    guild_id = form.get("guild_id")
+    days = int(form.get("days", 30))
+    from premium import grant_premium
+    if guild_id:
+        await grant_premium(guild_id, days)
+    return RedirectResponse("/admin?tab=billing", status_code=303)
