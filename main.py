@@ -155,11 +155,18 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     if bot_in_guild:
         for r in reversed(guild.roles):
             current_perms = [perm[0] for perm in r.permissions if perm[1]]
+            
+            can_edit = True
+            if r >= guild.me.top_role and guild.owner_id != guild.me.id:
+                can_edit = False
+            if r.managed:
+                can_edit = False
+                
             roles.append({
                 "id": str(r.id), "name": r.name, 
                 "color": str(r.color) if r.color.value != 0 else "#71717a",
                 "is_everyone": r.name == "@everyone", "is_bot": r.managed,
-                "current": current_perms
+                "current": current_perms, "can_edit": can_edit
             })
             
         for m in guild.members:
@@ -199,11 +206,18 @@ async def sync_manager_get(request: Request, guild_id: str):
         for r in reversed(guild.roles):
             # Parse existing permissions to check boxes correctly
             current_perms = [perm[0] for perm in r.permissions if perm[1]]
+            
+            can_edit = True
+            if r >= guild.me.top_role and guild.owner_id != guild.me.id:
+                can_edit = False
+            if r.managed:
+                can_edit = False
+                
             roles.append({
                 "id": str(r.id), "name": r.name, 
                 "color": str(r.color) if r.color.value != 0 else "#71717a",
                 "is_everyone": r.name == "@everyone", "is_bot": r.managed,
-                "current": current_perms
+                "current": current_perms, "can_edit": can_edit
             })
 
     return templates.TemplateResponse("sync.html", {
@@ -235,23 +249,49 @@ async def apply_sync_post(request: Request, guild_id: str):
     ]
     
     for role in guild.roles:
-        # Safety constraint: Do not edit roles higher than the bot
+        # Safety constraint: Do not edit roles higher than the bot or managed roles
         if role >= guild.me.top_role and guild.owner_id != guild.me.id:
             continue
+        if role.managed:
+            continue
             
+        # If the role was not submitted in the form at all, skip it.
+        # We can check this by seeing if a hidden input with the role id was submitted.
+        # Wait, we didn't add the hidden input yet. Let's just check if the role is editable.
+        # Actually, if the role is editable, it IS in the form.
+        # But what if the user unchecks ALL boxes? `perms_list` will be empty.
+        # That's fine, we want to clear all permissions.
+        
         perms_list = form_data.getlist(f"perms_{role.id}")
         
-        new_perms = discord.Permissions(role.permissions.value)
+        # Safely update permissions by creating a new Permissions object
+        # First, get all current permissions as a dict
+        current_kwargs = {}
+        for prop in dir(role.permissions):
+            if not prop.startswith('_') and prop != 'value' and isinstance(getattr(type(role.permissions), prop, None), property):
+                try:
+                    current_kwargs[prop] = getattr(role.permissions, prop)
+                except:
+                    pass
+                    
+        # Override with managed permissions from the form
         for p in managed_perms:
-            try: setattr(new_perms, p, p in perms_list)
-            except: pass
+            current_kwargs[p] = p in perms_list
+            
+        try:
+            new_perms = discord.Permissions(**current_kwargs)
+        except Exception as e:
+            print(f"Error creating permissions for {role.name}: {e}")
+            new_perms = role.permissions
         
         # Only issue discord API call if permissions actually changed
         if role.permissions.value != new_perms.value:
             try:
                 await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Infrastructure Sync")
             except discord.Forbidden:
-                pass
+                return RedirectResponse(f"/server/{guild_id}/permissions?error=Bot lacks permission to edit role {role.name}.&error_title=Bot Permission Error", status_code=303)
+            except Exception as e:
+                return RedirectResponse(f"/server/{guild_id}/permissions?error=Failed to edit role {role.name}: {str(e)}&error_title=Error", status_code=303)
 
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 # ----------------------------------------------------------
