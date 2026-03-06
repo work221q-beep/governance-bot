@@ -157,16 +157,25 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
             current_perms = [perm[0] for perm in r.permissions if perm[1]]
             
             can_edit = True
-            if r >= guild.me.top_role and guild.owner_id != guild.me.id:
-                can_edit = False
+            edit_reason = ""
+            
             if r.managed:
                 can_edit = False
+                edit_reason = "Managed by an integration"
+            elif r >= guild.me.top_role and guild.owner_id != guild.me.id:
+                can_edit = False
+                edit_reason = "Role is higher or equal to the bot's highest role"
+            elif user_power not in ["Owner", "Administrator"]:
+                if web_member and r >= web_member.top_role and guild.owner_id != web_member.id:
+                    can_edit = False
+                    edit_reason = "Role is higher or equal to your highest role"
                 
             roles.append({
                 "id": str(r.id), "name": r.name, 
                 "color": str(r.color) if r.color.value != 0 else "#71717a",
                 "is_everyone": r.name == "@everyone", "is_bot": r.managed,
-                "current": current_perms, "can_edit": can_edit
+                "current": current_perms, "can_edit": can_edit,
+                "edit_reason": edit_reason
             })
             
         for m in guild.members:
@@ -193,37 +202,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
 # --- FIX: ADDED MISSING CORE INFRASTRUCTURE SYNC ROUTES ---
 @app.get("/server/{guild_id}/sync")
 async def sync_manager_get(request: Request, guild_id: str):
-    user_cookie = request.cookies.get("session")
-    if not user_cookie: return RedirectResponse("/login")
-    
-    session_user = serializer.loads(user_cookie)
-    guild = bot.get_guild(int(guild_id))
-    bot_in_guild = True if guild else False
-    guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
-
-    roles =[]
-    if bot_in_guild:
-        for r in reversed(guild.roles):
-            # Parse existing permissions to check boxes correctly
-            current_perms = [perm[0] for perm in r.permissions if perm[1]]
-            
-            can_edit = True
-            if r >= guild.me.top_role and guild.owner_id != guild.me.id:
-                can_edit = False
-            if r.managed:
-                can_edit = False
-                
-            roles.append({
-                "id": str(r.id), "name": r.name, 
-                "color": str(r.color) if r.color.value != 0 else "#71717a",
-                "is_everyone": r.name == "@everyone", "is_bot": r.managed,
-                "current": current_perms, "can_edit": can_edit
-            })
-
-    return templates.TemplateResponse("sync.html", {
-        "request": request, "guild_id": guild_id, "guild_name": guild_name,
-        "user": session_user, "bot_in_guild": bot_in_guild, "roles": roles
-    })
+    return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
 @app.post("/server/{guild_id}/sync")
 async def apply_sync_post(request: Request, guild_id: str):
