@@ -103,7 +103,53 @@
                     💎 Uplink Secured
                 </div>
                 <h2 class="text-5xl md:text-7xl font-black text-white mb-6 tracking-tighter">Maximum Security Active.</h2>
-                <p class="text-white/60 text-xl max-w-2xl mx-auto font-light leading-relaxed">Your realm operates with unrestricted Wargame clearance and hyper-accelerated cooldowns.</p>
+                <p class="text-white/60 text-xl max-w-2xl mx-auto font-light leading-relaxed mb-6">Your realm operates with unrestricted Wargame clearance and hyper-accelerated cooldowns.</p>
+                
+                {% if premium_expires_at %}
+                <div class="inline-flex flex-col items-center bg-white/5 border border-white/10 rounded-2xl p-6 shadow-lg backdrop-blur-md">
+                    <span class="text-white/40 uppercase tracking-[0.2em] text-xs font-bold mb-2">Matrix Duration Remaining</span>
+                    <div id="premium-countdown" class="text-3xl font-mono font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400" data-expires="{{ premium_expires_at }}">
+                        Calculating...
+                    </div>
+                </div>
+                <script>
+                    function updateCountdown() {
+                        const el = document.getElementById('premium-countdown');
+                        if (!el) return;
+                        const expiresStr = el.getAttribute('data-expires');
+                        if (!expiresStr) return;
+                        
+                        const expiresDate = new Date(expiresStr);
+                        const now = new Date();
+                        const diff = expiresDate - now;
+                        
+                        if (diff <= 0) {
+                            el.textContent = "EXPIRED";
+                            el.classList.replace('from-emerald-400', 'from-[#ff003c]');
+                            el.classList.replace('to-cyan-400', 'to-red-600');
+                            return;
+                        }
+                        
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+                        const minutes = Math.floor((diff / 1000 / 60) % 60);
+                        const seconds = Math.floor((diff / 1000) % 60);
+                        
+                        if (days > 0) {
+                            el.textContent = `${days}D`;
+                        } else if (hours > 0) {
+                            el.textContent = `${hours}H`;
+                        } else if (minutes > 0) {
+                            el.textContent = `${minutes}M`;
+                        } else {
+                            el.textContent = `${seconds}S`;
+                        }
+                    }
+                    setInterval(updateCountdown, 1000);
+                    updateCountdown();
+                </script>
+                {% endif %}
+                
                 {% else %}
                 <div class="inline-block liquid-glass border border-white/10 text-white/60 px-6 py-2 rounded-full font-bold mb-8 text-xs tracking-widest uppercase">
                     Current Matrix: Standard
@@ -184,7 +230,11 @@
                 
                 {% if request.query_params.get('success') %}
                 <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-xl mb-6 text-sm font-bold">
+                    {% if request.query_params.get('success') == 'true' %}
+                    Payment successful! Your premium features are now active.
+                    {% else %}
                     License key redeemed successfully! Premium features are now active.
+                    {% endif %}
                 </div>
                 {% endif %}
                 

@@ -75,15 +75,20 @@
                 });
             }
 
-            // Intercept link clicks
-            document.querySelectorAll('a').forEach(link => {
-                link.addEventListener('click', (e) => {
-                    if (hasUnsavedChanges && !link.closest('#deploy-bar') && !link.closest('#mod-modal') && !link.closest('#channel-modal')) {
+            // Intercept clicks to trap user when there are unsaved changes
+            document.addEventListener('click', (e) => {
+                if (hasUnsavedChanges) {
+                    const isDeployBar = e.target.closest('#deploy-bar');
+                    const isRoleAccordion = e.target.closest('[id^="perms-"]') || e.target.closest('.cursor-pointer');
+                    const isLinkOrTab = e.target.closest('a') || e.target.closest('.tab-btn');
+                    
+                    if (isLinkOrTab && !isDeployBar) {
                         e.preventDefault();
+                        e.stopPropagation();
                         triggerShake();
                     }
-                });
-            });
+                }
+            }, true); // Use capture phase to intercept early
 
             // Warn before leaving page
             window.addEventListener('beforeunload', (e) => {
@@ -120,11 +125,6 @@
         }
 
         function switchTab(tabName) {
-            if (hasUnsavedChanges) {
-                triggerShake();
-                return;
-            }
-
             document.querySelectorAll('.tab-content').forEach(el => {
                 el.classList.add('hidden'); el.classList.remove('fade-in');
             });
@@ -383,7 +383,7 @@
                             <button type="button" onclick="discardChanges()" class="bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold py-4 px-8 rounded-xl uppercase tracking-widest text-sm cursor-pointer transition-all border border-white/10 pointer-events-auto">
                                 Discard
                             </button>
-                            <button type="submit" class="bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-black py-4 px-10 rounded-xl uppercase tracking-widest text-sm cursor-pointer shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all transform hover:scale-105 border border-red-500 pointer-events-auto">
+                            <button type="submit" onclick="hasUnsavedChanges = false;" class="bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-black py-4 px-10 rounded-xl uppercase tracking-widest text-sm cursor-pointer shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all transform hover:scale-105 border border-red-500 pointer-events-auto">
                                 Execute Override
                             </button>
                         </div>
@@ -552,15 +552,8 @@
                     deployBar.classList.add('translate-y-0', 'opacity-100');
                 });
 
-                // Warn before leaving if there are unsaved changes
-                window.addEventListener('beforeunload', (e) => {
-                    if (hasUnsavedChanges) {
-                        e.preventDefault();
-                        e.returnValue = '';
-                    }
-                });
-
-                // Clear unsaved changes flag on submit so it doesn't warn
+            // Clear unsaved changes flag on submit so it doesn't warn
+            if (rolesForm) {
                 rolesForm.addEventListener('submit', () => {
                     hasUnsavedChanges = false;
                 });
@@ -573,7 +566,15 @@
                 const isModModalOpen = modModal && !modModal.classList.contains('hidden');
                 const isChannelModalOpen = channelModal && !channelModal.classList.contains('hidden');
                 
-                if (!hasUnsavedChanges && !isModModalOpen && !isChannelModalOpen) {
+                // Check if any role accordion is open
+                let isAnyRoleOpen = false;
+                document.querySelectorAll('[id^="perms-"]').forEach(el => {
+                    if (!el.classList.contains('hidden')) {
+                        isAnyRoleOpen = true;
+                    }
+                });
+                
+                if (!hasUnsavedChanges && !isModModalOpen && !isChannelModalOpen && !isAnyRoleOpen) {
                     fetch(window.location.href)
                         .then(response => response.text())
                         .then(html => {
