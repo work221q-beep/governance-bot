@@ -59,7 +59,7 @@ async def invite_bot(guild_id: str = None):
 async def callback(request: Request, code: str = None, error: str = None, state: str = None):
     if state and state.startswith("invite"):
         if error:
-            return RedirectResponse(url="/")
+            return RedirectResponse(url="/dashboard")
         
         parts = state.split("_")
         if len(parts) > 1 and parts[1]:
@@ -85,9 +85,13 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             """)
 
     if error:
-        return RedirectResponse(url="/")
+        if state and "premium" in state:
+            return RedirectResponse(url="/")
+        return RedirectResponse(url="/login")
     if not code:
-        return RedirectResponse(url="/")
+        if state and "premium" in state:
+            return RedirectResponse(url="/")
+        return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient() as client:
         token_res = await client.post("https://discord.com/api/oauth2/token", data={
@@ -356,8 +360,7 @@ async def buy_premium(request: Request, guild_id: str):
             "currency": "USD",
             "merchant_wallet": os.getenv("POLYGON_WALLET", "0x0000000000000000000000000000000000000000"),
             "callback_url": f"{base_url}/api/webhooks/payment?chain2pay_order_id={order_id}",
-            "customer_email": session_user.get("email", "user@example.com"),
-            "provider": "stripe"
+            "customer_email": session_user.get("email", "user@example.com")
         }
         try:
             resp = await client.post("https://chain2pay.cloud/api/generate", json=payload)

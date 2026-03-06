@@ -102,12 +102,10 @@ async def start_raid(interaction: discord.Interaction):
 
     # Cancel existing wargame if one is active
     if interaction.guild.id in active_guild_sessions:
-        killed_active_game = False
         for game_id, wargame in list(active_wargames.items()):
             channel = bot.get_channel(wargame["channel_id"])
             if channel and channel.guild.id == interaction.guild.id:
                 wargame["cancelled"] = True
-                killed_active_game = True
                 if wargame.get("attempts", 0) > 0:
                     await set_cooldown(wargame["guild_id"], wargame["raid_type"])
                 
@@ -124,11 +122,8 @@ async def start_raid(interaction: discord.Interaction):
         if interaction.guild.id in active_guild_sessions:
             active_guild_sessions.remove(interaction.guild.id)
 
-        if killed_active_game:
-            await interaction.channel.send("🛑 **Previous active wargame terminated.** Cooldown rules applied based on attempts.")
-        elif to_remove:
-            await interaction.channel.send("🛑 **Previous deployment cancelled.**")
-        # Do not return, continue to deploy the new wargame dropdown
+        await interaction.response.send_message("🛑 **Active wargame terminated.** You cannot start a new wargame while one is already deploying or active. Cooldown rules have been applied if attempts were made.", ephemeral=True, delete_after=10.0)
+        return
 
     active_guild_sessions.add(interaction.guild.id)
 
