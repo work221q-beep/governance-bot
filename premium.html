@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Sylas | Alpha Premium</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <style> 
+        body { font-family: 'Space Grotesk', sans-serif; background-color: #030305; color: #fff; overflow-x: hidden; } 
+        .liquid-glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(40px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .ambient-blob { position: absolute; filter: blur(120px); border-radius: 50%; opacity: 0.5; z-index: -1; animation: float 10s infinite alternate ease-in-out; }
+        @keyframes float { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(-30px, 20px) scale(1.1); } }
+        
+        .premium-card { background: linear-gradient(145deg, rgba(20,21,25,0.4) 0%, rgba(5,5,5,0.6) 100%); border: 1px solid rgba(255,0,60,0.2); position: relative; z-index: 1; transition: transform 0.4s; }
+        .premium-card::before { content: ''; position: absolute; inset: -2px; background: linear-gradient(45deg, #ff003c, #7000ff, #ff003c); z-index: -1; filter: blur(15px); opacity: 0.2; transition: opacity 0.5s; border-radius: inherit; animation: spin 4s linear infinite; background-size: 200% 200%; }
+        .premium-card:hover { transform: translateY(-10px); }
+        .premium-card:hover::before { opacity: 0.6; }
+        @keyframes spin { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        
+        .cyber-btn { position: relative; overflow: hidden; background: transparent; border: 1px solid #ff003c; box-shadow: 0 0 15px rgba(255,0,60,0.3); transition: all 0.3s; color: white; }
+        .cyber-btn::before { content: ''; position: absolute; inset: 0; background: #ff003c; transform: scaleX(0); transform-origin: right; transition: transform 0.4s ease; z-index: -1; }
+        .cyber-btn:hover::before { transform: scaleX(1); transform-origin: left; }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden relative">
+
+    <div class="ambient-blob bg-[#ff003c] w-[50vw] h-[50vw] top-[-20%] left-[-10%] mix-blend-screen"></div>
+    <div class="ambient-blob bg-[#7000ff] w-[40vw] h-[40vw] bottom-[-20%] right-[-10%] mix-blend-screen" style="animation-delay: -3s"></div>
+
+    <!-- UNIFIED SERVER SIDEBAR -->
+    <aside class="w-72 liquid-glass border-r border-white/5 flex flex-col z-20 relative">
+        <div class="p-6 border-b border-white/5">
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-[#ff003c]">.AI</span></h1>
+            <p class="text-[10px] text-white/40 mt-1 uppercase tracking-widest font-mono truncate border border-white/10 inline-block px-2 py-0.5 rounded bg-black/30">{{ guild_name }}</p>
+        </div>
+        <div class="flex-1 overflow-y-auto py-4 px-4">
+            <p class="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mb-3 ml-2">Core Modules</p>
+            <div class="space-y-1">
+                <a href="/server/{{ guild_id }}/permissions" class="block px-4 py-2.5 rounded-lg text-white/50 hover:bg-white/5 hover:text-white transition-colors text-sm font-medium border border-transparent">🛡️ Security Manager</a>
+                <a href="/server/{{ guild_id }}/premium" class="block px-4 py-2.5 rounded-lg bg-[#ff003c]/10 text-[#ff003c] font-bold text-sm border border-[#ff003c]/20 shadow-[0_0_15px_rgba(255,0,60,0.1)]">💎 Alpha Premium</a>
+            </div>
+        </div>
+        <div class="p-4 border-t border-white/5 space-y-2 bg-black/20">
+            <a href="/dashboard" class="block text-center w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl transition-all text-sm">← Global Network</a>
+        </div>
+    </aside>
+
+    <main class="flex-1 overflow-y-auto p-10 relative z-10">
+        <div class="max-w-5xl mx-auto relative z-10 flex flex-col items-center pt-10">
+            <header class="text-center mb-16">
+                {% if has_premium %}
+                <div class="inline-block liquid-glass border border-emerald-500/50 text-emerald-400 px-8 py-3 rounded-full font-bold mb-8 shadow-[0_0_30px_rgba(16,185,129,0.2)] text-sm tracking-widest uppercase">
+                    💎 Uplink Secured
+                </div>
+                <h2 class="text-5xl md:text-7xl font-black text-white mb-6 tracking-tighter">Maximum Security Active.</h2>
+                <p class="text-white/60 text-xl max-w-2xl mx-auto font-light leading-relaxed">Your realm operates with unrestricted Wargame clearance and hyper-accelerated cooldowns.</p>
+                {% else %}
+                <div class="inline-block liquid-glass border border-white/10 text-white/60 px-6 py-2 rounded-full font-bold mb-8 text-xs tracking-widest uppercase">
+                    Current Matrix: Standard
+                </div>
+                <h2 class="text-5xl md:text-7xl font-black text-white mb-6 tracking-tighter">Ascend to <span class="text-transparent bg-clip-text bg-gradient-to-r from-[#ff003c] to-[#7000ff]">Alpha</span>.</h2>
+                <p class="text-white/60 text-xl max-w-2xl mx-auto font-light leading-relaxed">Unleash unrestricted AI behavioral models, obliterate cooldown limits, and unlock total database integration for <strong>{{ guild_name }}</strong>.</p>
+                {% endif %}
+            </header>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-4xl mx-auto w-full">
+                
+                <!-- Base Plan -->
+                <div class="liquid-glass rounded-3xl p-10 relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-white/[0.01] group-hover:bg-white/[0.03] transition-colors"></div>
+                    <h3 class="text-2xl font-bold text-white mb-2 relative z-10">Alpha Weekly</h3>
+                    <p class="text-white/40 text-sm mb-8 relative z-10">Temporary stress-test payload.</p>
+                    <div class="mb-10 relative z-10">
+                        <span class="text-6xl font-black text-white">$5</span>
+                        <span class="text-white/40 font-mono text-sm ml-2">/ 7 days</span>
+                    </div>
+                    
+                    <ul class="space-y-5 mb-10 text-sm font-medium text-white/70 relative z-10">
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl">✓</span> All 6 Wargames Unlocked</li>
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl">✓</span> Insider Threat Protocol</li>
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl">✓</span> 4-Hour Cooldown Matrix</li>
+                    </ul>
+                    
+                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-xl transition-all relative z-10 uppercase tracking-widest text-sm">
+                        Acquire License
+                    </button>
+                </div>
+
+                <!-- Premium Plan -->
+                <div class="premium-card rounded-3xl p-10 transform md:-translate-y-4">
+                    <div class="absolute top-6 right-6 bg-[#ff003c] text-white text-[10px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,0,60,0.5)]">Most Popular</div>
+                    
+                    <h3 class="text-2xl font-bold text-white mb-2 relative z-10">Alpha Monthly</h3>
+                    <p class="text-white/40 text-sm mb-8 relative z-10">Continuous defensive operations.</p>
+                    <div class="mb-10 relative z-10 flex items-end">
+                        <span class="text-6xl font-black text-white">$17.99</span>
+                        <span class="text-white/40 font-mono text-sm ml-2 pb-2">/ 30 days</span>
+                    </div>
+                    
+                    <ul class="space-y-5 mb-10 text-sm font-medium text-white/80 relative z-10">
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl drop-shadow-[0_0_5px_#ff003c]">✓</span> All 6 Wargames Unlocked</li>
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl drop-shadow-[0_0_5px_#ff003c]">✓</span> Insider Threat Protocol</li>
+                        <li class="flex items-center gap-4"><span class="text-[#ff003c] text-xl drop-shadow-[0_0_5px_#ff003c]">✓</span> 4-Hour Rapid Cooldowns</li>
+                        <li class="flex items-center gap-4"><span class="text-purple-400 text-xl drop-shadow-[0_0_5px_#7000ff]">✦</span> Priority AI Compute Queue</li>
+                    </ul>
+                    
+                    <button onclick="alert('Payment Gateway Integration Pending...')" class="w-full cyber-btn font-black py-4 rounded-xl uppercase tracking-widest text-sm relative z-10">
+                        Acquire License
+                    </button>
+                </div>
+
+            </div>
+
+            <div class="text-center mt-16">
+                <p class="text-white/30 font-bold uppercase tracking-[0.3em] text-[10px] font-mono">Yearly Enterprise Matrix — Compiling...</p>
+            </div>
+        </div>
+    </main>
+
+</body>
+</html>
