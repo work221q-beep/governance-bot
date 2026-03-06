@@ -93,7 +93,7 @@ async def permissions_manager(request: Request, guild_id: str):
     bot_in_guild = True if guild else False
     guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
 
-    roles, users, bots, channels = [], [], [], []
+    roles, users, bots, channels = [], [], [],[]
     
     if bot_in_guild:
         for r in reversed(guild.roles):
@@ -121,7 +121,66 @@ async def permissions_manager(request: Request, guild_id: str):
         "user": session_user, "bot_in_guild": bot_in_guild
     })
 
-# NEW: Premium Page Routing
+# --- FIX: ADDED MISSING CORE INFRASTRUCTURE SYNC ROUTES ---
+@app.get("/server/{guild_id}/sync")
+async def sync_manager_get(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    session_user = serializer.loads(user_cookie)
+    guild = bot.get_guild(int(guild_id))
+    bot_in_guild = True if guild else False
+    guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
+
+    roles =[]
+    if bot_in_guild:
+        for r in reversed(guild.roles):
+            # Parse existing permissions to check boxes correctly
+            current_perms = [perm[0] for perm in r.permissions if perm[1]]
+            roles.append({
+                "id": str(r.id), "name": r.name, 
+                "color": str(r.color) if r.color.value != 0 else "#71717a",
+                "is_everyone": r.name == "@everyone", "is_bot": r.managed,
+                "current": current_perms
+            })
+
+    return templates.TemplateResponse("sync.html", {
+        "request": request, "guild_id": guild_id, "guild_name": guild_name,
+        "user": session_user, "bot_in_guild": bot_in_guild, "roles": roles
+    })
+
+@app.post("/server/{guild_id}/sync")
+async def apply_sync_post(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    guild = bot.get_guild(int(guild_id))
+    if not guild: return RedirectResponse(f"/server/{guild_id}/sync")
+    
+    form_data = await request.form()
+    
+    for role in guild.roles:
+        # Safety constraint: Do not edit roles higher than the bot
+        if role >= guild.me.top_role and guild.owner_id != guild.me.id:
+            continue
+            
+        perms_list = form_data.getlist(f"perms_{role.id}")
+        
+        new_perms = discord.Permissions()
+        for p in perms_list:
+            try: setattr(new_perms, p, True)
+            except: pass
+        
+        # Only issue discord API call if permissions actually changed
+        if role.permissions.value != new_perms.value:
+            try:
+                await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Infrastructure Sync")
+            except discord.Forbidden:
+                pass
+
+    return RedirectResponse(f"/server/{guild_id}/sync", status_code=303)
+# ----------------------------------------------------------
+
 @app.get("/server/{guild_id}/premium")
 async def premium_manager(request: Request, guild_id: str):
     user_cookie = request.cookies.get("session")
@@ -217,7 +276,7 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     
     if channel and role:
         overwrite = channel.overwrites_for(role)
-        for perm in ["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
+        for perm in["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
             val = form_data.get(perm)
             if val == "allow": setattr(overwrite, perm, True)
             elif val == "deny": setattr(overwrite, perm, False)
@@ -265,11 +324,8 @@ async def toggle_bot(request: Request):
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
-    """Triggers the new parallel sweep to populate all modules evenly across providers."""
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
-    
     bg_tasks.add_task(parallel_harvest_sweep)
-        
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
