@@ -65,7 +65,7 @@ async def callback(code: str):
     
     response = RedirectResponse(url="/dashboard")
     response.set_cookie("session", serializer.dumps({
-        "id": user["id"], "username": user["username"], "avatar": avatar_url, "guilds": manageable_guilds
+        "id": user["id"], "username": user["username"], "global_name": user.get("global_name"), "avatar": avatar_url, "guilds": manageable_guilds
     }), httponly=True)
     return response
 
@@ -111,6 +111,10 @@ async def permissions_manager(request: Request, guild_id: str):
 
     roles, users, bots, channels = [], [], [],[]
     
+    web_member = guild.get_member(int(session_user.get("id"))) if bot_in_guild else None
+    display_name = web_member.display_name if web_member else (session_user.get("global_name") or session_user.get("username"))
+    user_avatar = str(web_member.display_avatar.url) if web_member and web_member.display_avatar else session_user.get("avatar")
+    
     if bot_in_guild:
         for r in reversed(guild.roles):
             current_perms = [perm[0] for perm in r.permissions if perm[1]]
@@ -137,7 +141,8 @@ async def permissions_manager(request: Request, guild_id: str):
         "request": request, "guild_id": guild_id, "roles": roles, "users": users, 
         "bots": bots, "channels": channels, "guild_name": guild_name,
         "user": session_user, "bot_in_guild": bot_in_guild,
-        "has_premium": has_premium, "user_power": user_power
+        "has_premium": has_premium, "user_power": user_power,
+        "display_name": display_name, "user_avatar": user_avatar
     })
 
 # --- FIX: ADDED MISSING CORE INFRASTRUCTURE SYNC ROUTES ---
