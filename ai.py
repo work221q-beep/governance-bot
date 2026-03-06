@@ -9,10 +9,10 @@ SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 # Global HTTP Client for connection pooling
 http_client = httpx.AsyncClient(timeout=60.0)
 
-# Training Configuration
-MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
-CAPS = {m: 25 for m in MODULES}
-for m in MODULES: CAPS[f"innocent_{m}"] = 50
+# Training Configuration (UPDATED CAPACITIES)
+MODULES =["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
+CAPS = {m: 30 for m in MODULES}
+for m in MODULES: CAPS[f"innocent_{m}"] = 30
 
 # Track model health (15s timeout on failure)
 model_backoff = {"openrouter": 0, "sambanova": 0}
@@ -38,7 +38,7 @@ def get_ai_prompt(raid_type: str) -> str:
     }
     
     core_content = prompts.get(raid_type, "casual gaming chat messages.")
-    return f"{base_req} [Seed: {seed}] Generate 5 {core_content}"
+    return f"{base_req}[Seed: {seed}] Generate 5 {core_content}"
 
 async def call_openrouter(prompt: str):
     """Primary fallback pool using Trinity, Nemotron, and Stepfun."""
@@ -49,12 +49,12 @@ async def call_openrouter(prompt: str):
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
         json={
-            "models": [
+            "models":[
                 "arcee-ai/trinity-large-preview:free", 
                 "nvidia/nemotron-3-nano-30b-a3b:free",
                 "stepfun/step-3.5-flash:free"
             ], 
-            "messages": [{"role": "user", "content": prompt}]
+            "messages":[{"role": "user", "content": prompt}]
         }
     )
     response.raise_for_status()
@@ -90,7 +90,7 @@ async def call_sambanova(prompt: str):
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
 async def harvest_payloads(raid_type: str):
-    max_cap = CAPS.get(raid_type, 25)
+    max_cap = CAPS.get(raid_type, 30)
     if await payload_armory.count_documents({"raid_type": raid_type}) >= max_cap: return 0
 
     prompt = get_ai_prompt(raid_type)
@@ -137,7 +137,7 @@ async def parallel_harvest_sweep():
         except Exception as e:
             print(f"🚨 Background Harvest Error on {r_type}: {e}")
             
-    tasks = [safe_harvest(r_type) for r_type, cap in CAPS.items() 
+    tasks =[safe_harvest(r_type) for r_type, cap in CAPS.items() 
              if await payload_armory.count_documents({"raid_type": r_type}) < cap]
     if tasks: await asyncio.gather(*tasks, return_exceptions=True)
 
