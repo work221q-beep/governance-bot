@@ -105,9 +105,9 @@
                 <span class="text-4xl animate-pulse">⚠️</span>
             </div>
             <h2 class="text-4xl font-black text-white mb-4 tracking-tighter">Uplink Severed</h2>
-            <p class="text-white/60 mb-8 leading-relaxed font-light">Sylas AI is absent from <strong>{{ guild_name }}</strong>. Deploy the engine to establish the security matrix.</p>
-            <a href="/invite" target="_blank" class="inline-block bg-[#ff003c] hover:bg-[#ff003c]/80 text-white font-black uppercase tracking-widest text-sm py-4 px-10 transition-all shadow-[0_0_20px_rgba(255,0,60,0.4)]">
-                Deploy Engine
+            <p class="text-white/60 mb-8 leading-relaxed font-light">Sylas AI is missing from <strong>{{ guild_name }}</strong>. Bring the bot online to start running raid simulations and forging your mod team.</p>
+            <a href="/invite?guild_id={{ guild_id }}" class="inline-block bg-[#ff003c] hover:bg-[#ff003c]/80 text-white font-black uppercase tracking-widest text-sm py-4 px-10 transition-all shadow-[0_0_20px_rgba(255,0,60,0.4)]">
+                Add to server
             </a>
         </div>
     </div>
@@ -116,7 +116,7 @@
     <!-- UNIFIED SERVER SIDEBAR -->
     <aside class="w-72 liquid-glass border-r border-white/5 flex flex-col z-20 relative">
         <div class="p-6 border-b border-white/5">
-            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS<span class="text-[#ff003c]">.AI</span></h1>
+            <h1 class="text-2xl font-black tracking-widest text-white">SYLAS <span class="text-[#ff003c]">AI</span></h1>
             <div class="flex items-center gap-2 mt-1">
                 <p class="text-[10px] text-white/40 uppercase tracking-widest font-mono truncate border border-white/10 inline-block px-2 py-0.5 rounded bg-black/30">{{ guild_name }}</p>
                 {% if has_premium %}
