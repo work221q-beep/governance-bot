@@ -295,9 +295,8 @@
             <div id="roles" class="tab-content">
                 <form id="roles-form" method="post" action="/server/{{ guild_id }}/sync" class="space-y-6 pb-32">
                     {% for role in roles %}
-                    {% if role.can_edit %}
-                    <div class="liquid-glass border {% if role.is_everyone %}border-[#ff003c]/50 shadow-[0_0_30px_rgba(255,0,60,0.15)]{% else %}border-white/5 hover:border-white/20{% endif %} rounded-2xl overflow-hidden transition-all duration-300">
-                        <div class="bg-black/40 px-6 py-4 flex justify-between items-center cursor-pointer select-none" onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')">
+                    <div class="liquid-glass border {% if role.is_everyone %}border-[#ff003c]/50 shadow-[0_0_30px_rgba(255,0,60,0.15)]{% else %}border-white/5 hover:border-white/20{% endif %} rounded-2xl overflow-hidden transition-all duration-300 {% if not role.can_edit %}opacity-60 grayscale-[50%]{% endif %}">
+                        <div class="bg-black/40 px-6 py-4 flex justify-between items-center {% if role.can_edit %}cursor-pointer hover:bg-white/[0.02]{% endif %} select-none" {% if role.can_edit %}onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')"{% endif %}>
                             <div class="flex items-center gap-4">
                                 {% if not role.is_everyone %}<span class="w-4 h-4 rounded-full shadow-inner border border-white/20" style="background-color: {{ role.color }};"></span>{% endif %}
                                 <h3 class="text-xl font-bold text-white flex items-center">
@@ -306,9 +305,17 @@
                                     {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-3">Integration</span>{% endif %}
                                 </h3>
                             </div>
-                            <span class="text-xs font-mono text-white/30 bg-white/5 px-2 py-1 rounded border border-white/5">{{ role.current|length }} Perms</span>
+                            <div class="flex items-center gap-4">
+                                {% if not role.can_edit %}
+                                <span class="text-[10px] text-red-400/80 font-mono bg-red-900/20 px-3 py-1 rounded border border-red-500/20">🔒 {{ role.edit_reason }}</span>
+                                {% else %}
+                                <span class="text-xs font-mono text-white/30 bg-white/5 px-2 py-1 rounded border border-white/5">{{ role.current|length }} Perms</span>
+                                <svg class="w-5 h-5 text-white/30 transition-transform duration-300 transform group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                {% endif %}
+                            </div>
                         </div>
                         
+                        {% if role.can_edit %}
                         <div id="perms-{{ role.id }}" class="hidden p-6 border-t border-white/5 bg-black/20">
                             <div class="flex flex-col gap-6">
                                 <!-- Core Mods -->
@@ -360,8 +367,8 @@
                                 </div>
                             </div>
                         </div>
+                        {% endif %}
                     </div>
-                    {% endif %}
                     {% endfor %}
 
                     <!-- Floating Save Bar -->
@@ -431,13 +438,23 @@
             <!-- CHANNELS -->
             <div id="channels" class="tab-content hidden grid grid-cols-1 md:grid-cols-2 gap-4">
                 {% for c in channels %}
+                {% if c.type == 'text' or c.type == 'voice' or c.type == 'category' or c.type == 'news' %}
                 <div class="liquid-glass border border-white/5 hover:border-white/30 p-5 rounded-2xl flex justify-between items-center transition-all cursor-pointer group hover:bg-white/[0.03]" onclick="openChannelModal('{{ c.id }}', '{{ c.name }}')">
                     <div class="flex items-center gap-4 truncate">
+                        {% if c.type == 'text' %}
                         <span class="text-white/20 font-light text-2xl group-hover:text-white/50 transition-colors">#</span>
+                        {% elif c.type == 'voice' %}
+                        <svg class="w-6 h-6 text-white/20 group-hover:text-white/50 transition-colors shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+                        {% elif c.type == 'news' %}
+                        <svg class="w-6 h-6 text-white/20 group-hover:text-white/50 transition-colors shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"></path><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"></path></svg>
+                        {% elif c.type == 'category' %}
+                        <svg class="w-6 h-6 text-white/20 group-hover:text-white/50 transition-colors shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        {% endif %}
                         <span class="font-bold text-white text-lg truncate">{{ c.name }}</span>
                     </div>
                     <span class="text-[10px] text-white/40 font-mono border border-white/10 px-2 py-1 rounded bg-black/40 uppercase tracking-widest shrink-0">{{ c.type }}</span>
                 </div>
+                {% endif %}
                 {% endfor %}
             </div>
 
