@@ -1,4 +1,4 @@
-import os, asyncio, httpx, discord, datetime, json
+import os, asyncio, httpx, discord, datetime, json, urllib.parse
 from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -34,7 +34,8 @@ async def home(request: Request):
 
 @app.get("/login")
 async def login():
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={DISCORD_REDIRECT_URI}&scope=identify%20guilds"
+    encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
+    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds"
     return RedirectResponse(url)
 
 @app.get("/logout")
@@ -45,12 +46,48 @@ async def logout():
     return response
 
 @app.get("/invite")
-async def invite_bot():
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot"
+async def invite_bot(guild_id: str = None):
+    state = f"invite_{guild_id}" if guild_id else "invite"
+    encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
+    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot&redirect_uri={encoded_uri}&response_type=code&state={state}"
+    if guild_id:
+        url += f"&guild_id={guild_id}&disable_guild_select=true"
     return RedirectResponse(url)
 
 @app.get("/auth/callback")
-async def callback(code: str):
+async def callback(request: Request, code: str = None, error: str = None, state: str = None):
+    if state and state.startswith("invite"):
+        if error:
+            return RedirectResponse(url="/")
+        
+        parts = state.split("_")
+        if len(parts) > 1 and parts[1]:
+            guild_id = parts[1]
+            return HTMLResponse(content=f"""
+                <html>
+                <head>
+                    <meta http-equiv="refresh" content="3;url=/server/{guild_id}/permissions" />
+                    <style>body {{ background: #030305; color: white; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}</style>
+                </head>
+                <body><h2 style="font-size: 2rem; font-weight: 900; letter-spacing: 0.1em;">AUTHORIZED. REDIRECTING...</h2></body>
+                </html>
+            """)
+        else:
+            return HTMLResponse(content="""
+                <html>
+                <head>
+                    <meta http-equiv="refresh" content="3;url=/" />
+                    <style>body { background: #030305; color: white; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }</style>
+                </head>
+                <body><h2 style="font-size: 2rem; font-weight: 900; letter-spacing: 0.1em;">AUTHORIZED. REDIRECTING...</h2></body>
+                </html>
+            """)
+
+    if error:
+        return RedirectResponse(url="/login")
+    if not code:
+        return RedirectResponse(url="/")
+
     async with httpx.AsyncClient() as client:
         token_res = await client.post("https://discord.com/api/oauth2/token", data={
             "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
