@@ -59,7 +59,7 @@ async def invite_bot(guild_id: str = None):
 async def callback(request: Request, code: str = None, error: str = None, state: str = None):
     if state and state.startswith("invite"):
         if error:
-            return RedirectResponse(url="/dashboard")
+            return RedirectResponse(url="/")
         
         parts = state.split("_")
         if len(parts) > 1 and parts[1]:
@@ -77,7 +77,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             return HTMLResponse(content="""
                 <html>
                 <head>
-                    <meta http-equiv="refresh" content="3;url=/" />
+                    <meta http-equiv="refresh" content="3;url=/dashboard" />
                     <style>body { background: #030305; color: white; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }</style>
                 </head>
                 <body><h2 style="font-size: 2rem; font-weight: 900; letter-spacing: 0.1em;">AUTHORIZED. REDIRECTING...</h2></body>
@@ -110,6 +110,8 @@ async def callback(request: Request, code: str = None, error: str = None, state:
         parts = state.split("_", 1)
         if len(parts) > 1 and parts[1]:
             redirect_url = urllib.parse.unquote(parts[1])
+    elif state and state.startswith("invite"):
+        redirect_url = "/"
             
     response = RedirectResponse(url=redirect_url)
     response.set_cookie("session", serializer.dumps({
@@ -300,6 +302,10 @@ async def premium_manager(request: Request, guild_id: str):
 
     # Check database for active sub
     has_premium = await is_guild_premium(int(guild_id))
+    
+    from db import guild_premium
+    prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
+    premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
 
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
@@ -316,7 +322,7 @@ async def premium_manager(request: Request, guild_id: str):
 
     return templates.TemplateResponse("premium.html", {
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
-        "user": session_user, "has_premium": has_premium,
+        "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar
     })
 
@@ -360,6 +366,8 @@ async def buy_premium(request: Request, guild_id: str):
             "currency": "USD",
             "merchant_wallet": os.getenv("POLYGON_WALLET", "0x0000000000000000000000000000000000000000"),
             "callback_url": f"{base_url}/api/webhooks/payment?chain2pay_order_id={order_id}",
+            "success_url": f"{base_url}/server/{guild_id}/premium?success=true",
+            "cancel_url": f"{base_url}/server/{guild_id}/premium",
             "customer_email": session_user.get("email", "user@example.com")
         }
         try:

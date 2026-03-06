@@ -157,7 +157,8 @@ async def end_raid(interaction: discord.Interaction):
         if channel and channel.guild.id == interaction.guild.id:
             wargame["cancelled"] = True
             killed_active_game = True
-            await set_cooldown(wargame["guild_id"], wargame["raid_type"])
+            if wargame.get("attempts", 0) > 0:
+                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
             
     # 2. Kill pending dropdown menus
     to_remove = []
@@ -260,8 +261,9 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             try: await status_msg.edit(embed=final_embed, delete_after=15.0)
             except: pass
             
-            # Set cooldown since the wargame completed or failed normally
-            await set_cooldown(wargame["guild_id"], wargame["raid_type"])
+            # Set cooldown since the wargame completed or failed normally, but only if they attempted at least 1 deletion OR if it wasn't a timeout with 0 attempts
+            if wargame.get("attempts", 0) > 0 or (wargame["scams_left"] == 0 and not wargame["failed"]):
+                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
         elif wargame and wargame.get("cancelled") and wargame.get("attempts", 0) > 0:
             # Set cooldown if cancelled but they attempted at least 1 deletion
             await set_cooldown(wargame["guild_id"], wargame["raid_type"])
