@@ -561,11 +561,6 @@
 
             // Auto-refresh data every 2 seconds
             setInterval(() => {
-                const modModal = document.getElementById('mod-modal');
-                const channelModal = document.getElementById('channel-modal');
-                const isModModalOpen = modModal && !modModal.classList.contains('hidden');
-                const isChannelModalOpen = channelModal && !channelModal.classList.contains('hidden');
-                
                 // Check if any role accordion is open
                 let isAnyRoleOpen = false;
                 document.querySelectorAll('[id^="perms-"]').forEach(el => {
@@ -574,25 +569,33 @@
                     }
                 });
                 
-                if (!hasUnsavedChanges && !isModModalOpen && !isChannelModalOpen && !isAnyRoleOpen) {
-                    fetch(window.location.href)
-                        .then(response => response.text())
-                        .then(html => {
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(html, 'text/html');
-                            
-                            const tabs = ['roles', 'users', 'bots', 'channels'];
-                            tabs.forEach(tab => {
-                                const currentTab = document.getElementById(tab);
-                                const newTab = doc.getElementById(tab);
-                                if (currentTab && newTab) {
+                fetch(window.location.href)
+                    .then(response => response.text())
+                    .then(html => {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        
+                        const tabs = ['roles', 'users', 'bots', 'channels'];
+                        tabs.forEach(tab => {
+                            const currentTab = document.getElementById(tab);
+                            const newTab = doc.getElementById(tab);
+                            if (currentTab && newTab) {
+                                let skipUpdate = false;
+                                // Don't update if we are interacting with this tab
+                                if (currentTab.contains(document.activeElement)) skipUpdate = true;
+                                // Don't update roles tab if a role is open or has unsaved changes
+                                if (tab === 'roles' && (isAnyRoleOpen || hasUnsavedChanges)) skipUpdate = true;
+                                
+                                if (!skipUpdate) {
                                     const classes = currentTab.className;
                                     currentTab.innerHTML = newTab.innerHTML;
                                     currentTab.className = classes;
                                 }
-                            });
-                            
-                            // Re-bind roles form listeners
+                            }
+                        });
+                        
+                        // Re-bind roles form listeners if roles tab was updated
+                        if (!isAnyRoleOpen && !hasUnsavedChanges) {
                             const newRolesForm = document.getElementById('roles-form');
                             if (newRolesForm) {
                                 originalFormState = new FormData(newRolesForm);
@@ -607,9 +610,9 @@
                                     });
                                 });
                             }
-                        })
-                        .catch(err => console.error('Auto-refresh failed:', err));
-                }
+                        }
+                    })
+                    .catch(err => console.error('Auto-refresh failed:', err));
             }, 2000);
         });
     </script>
