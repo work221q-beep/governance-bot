@@ -303,9 +303,16 @@ async def premium_manager(request: Request, guild_id: str):
     # Check database for active sub
     has_premium = await is_guild_premium(int(guild_id))
     
-    from db import guild_premium
+    from db import guild_premium, payments
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
+    
+    # Fetch transaction history for this guild
+    guild_payments = await payments.find({"guild_id": str(guild_id), "status": "paid"}).sort("created_at", -1).to_list(10)
+    for p in guild_payments:
+        p["_id"] = str(p["_id"])
+        if isinstance(p.get("created_at"), datetime.datetime):
+            p["created_at"] = p["created_at"].strftime("%Y-%m-%d %H:%M:%S")
 
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
@@ -323,7 +330,8 @@ async def premium_manager(request: Request, guild_id: str):
     return templates.TemplateResponse("premium.html", {
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
         "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
-        "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar
+        "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar,
+        "guild_payments": guild_payments
     })
 
 @app.post("/server/{guild_id}/redeem_key")
@@ -504,7 +512,7 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     
     if channel and role:
         overwrite = channel.overwrites_for(role)
-        for perm in["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
+        for perm in["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages", "manage_channels", "manage_permissions", "connect", "speak", "mute_members", "deafen_members", "move_members", "manage_events"]:
             val = form_data.get(perm)
             if val == "allow": setattr(overwrite, perm, True)
             elif val == "deny": setattr(overwrite, perm, False)
@@ -519,12 +527,21 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
 
 @app.get("/admin")
 async def admin_panel(request: Request, key: str = None):
+    user_cookie = request.cookies.get("session")
+    session_user = serializer.loads(user_cookie) if user_cookie else None
+    
+    # Check if user is the bot owner
+    is_master = session_user and str(session_user.get("id")) == str(MASTER_DISCORD_ID)
+    
     admin_auth = request.cookies.get("admin_auth")
     if key == ADMIN_KEY:
         response = RedirectResponse("/admin")
         response.set_cookie("admin_auth", "true", httponly=True)
         return response
-    if admin_auth != "true": return HTMLResponse("Unauthorized", status_code=403)
+        
+    # Allow access if authenticated as master OR has admin_auth cookie
+    if not (is_master or admin_auth == "true"):
+        return HTMLResponse("Unauthorized", status_code=403)
     
     # Sort by raid_type and limit increased to 1000 for the full armory view
     payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
@@ -558,8 +575,11 @@ async def admin_panel(request: Request, key: str = None):
         
     # Get license keys
     from db import license_keys, payments
-    keys = await license_keys.find({"used": False}).sort("expires_at", -1).to_list(1000)
-    for k in keys:
+    active_keys = await license_keys.find({"used": False}).sort("expires_at", -1).to_list(1000)
+    used_keys = await license_keys.find({"used": True}).sort("expires_at", -1).to_list(1000)
+    for k in active_keys:
+        k["_id"] = str(k["_id"])
+    for k in used_keys:
         k["_id"] = str(k["_id"])
         
     # Get payments and revenue
@@ -570,7 +590,7 @@ async def admin_panel(request: Request, key: str = None):
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
         "ai_status": "ONLINE", "db_structure": db_structure,
-        "servers": servers, "license_keys": keys,
+        "servers": servers, "active_keys": active_keys, "used_keys": used_keys,
         "payments": all_payments, "total_revenue": total_revenue
     })
 
@@ -676,6 +696,14 @@ async def admin_gift_premium(request: Request):
     guild_id = form.get("guild_id")
     days = int(form.get("days", 30))
     from premium import grant_premium
+    from db import admin_logs
     if guild_id:
         await grant_premium(guild_id, days)
-    return RedirectResponse("/admin?tab=billing", status_code=303)
+        await admin_logs.insert_one({
+            "action": "gift_premium",
+            "guild_id": guild_id,
+            "days": days,
+            "timestamp": datetime.datetime.utcnow()
+        })
+        return RedirectResponse(f"/admin?tab=billing&success=true&message=Gifted+{days}+days+to+{guild_id}", status_code=303)
+    return RedirectResponse("/admin?tab=billing&error=Missing+Guild+ID", status_code=303)
