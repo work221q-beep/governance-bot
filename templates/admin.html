@@ -26,33 +26,27 @@
             
             // Auto-refresh data every 2 seconds
             setInterval(() => {
-                // Only refresh if we are not interacting with a form or modal
-                const activeElement = document.activeElement;
-                const isTyping = activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT';
-                
-                if (!isTyping) {
-                    fetch(window.location.href)
-                        .then(response => response.text())
-                        .then(html => {
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(html, 'text/html');
-                            
-                            const tabs = ['control', 'armory', 'db', 'servers', 'billing'];
-                            tabs.forEach(tab => {
-                                const currentTab = document.getElementById(tab);
-                                const newTab = doc.getElementById(tab);
-                                if (currentTab && newTab) {
-                                    // Don't replace the whole tab if it contains the active element
-                                    if (!currentTab.contains(activeElement)) {
-                                        const classes = currentTab.className;
-                                        currentTab.innerHTML = newTab.innerHTML;
-                                        currentTab.className = classes;
-                                    }
+                fetch(window.location.href)
+                    .then(response => response.text())
+                    .then(html => {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        
+                        const tabs = ['control', 'armory', 'db', 'servers', 'billing'];
+                        tabs.forEach(tab => {
+                            const currentTab = document.getElementById(tab);
+                            const newTab = doc.getElementById(tab);
+                            if (currentTab && newTab) {
+                                // Don't replace the whole tab if it contains the active element
+                                if (!currentTab.contains(document.activeElement)) {
+                                    const classes = currentTab.className;
+                                    currentTab.innerHTML = newTab.innerHTML;
+                                    currentTab.className = classes;
                                 }
-                            });
-                        })
-                        .catch(err => console.error('Auto-refresh failed:', err));
-                }
+                            }
+                        });
+                    })
+                    .catch(err => console.error('Auto-refresh failed:', err));
             }, 2000);
         }
 
