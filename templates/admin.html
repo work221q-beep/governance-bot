@@ -19,63 +19,41 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
     <script>
-        let lastDbInteractionTime = Date.now();
-
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
             if (tab) { switchTab(tab); }
             
-            // Track interactions in the DB tab
-            const dbTab = document.getElementById('db');
-            if (dbTab) {
-                dbTab.addEventListener('click', () => { lastDbInteractionTime = Date.now(); });
-                dbTab.addEventListener('input', () => { lastDbInteractionTime = Date.now(); });
-            }
-            
-            // Auto-refresh data every 5 seconds
+            // Auto-refresh data every 2 seconds
             setInterval(() => {
-                fetch(window.location.href)
-                    .then(response => response.text())
-                    .then(html => {
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(html, 'text/html');
-                        
-                        const tabs = ['control', 'armory', 'db', 'servers', 'billing'];
-                        tabs.forEach(tab => {
-                            const currentTab = document.getElementById(tab);
-                            const newTab = doc.getElementById(tab);
-                            if (currentTab && newTab) {
-                                // Don't replace the whole tab if it contains the active element
-                                if (currentTab.contains(document.activeElement)) return;
-                                
-                                // Special handling for DB tab
-                                if (tab === 'db') {
-                                    const isEditorActive = !document.getElementById('editor-active').classList.contains('hidden');
-                                    const timeSinceInteraction = Date.now() - lastDbInteractionTime;
-                                    
-                                    // If editor is active, or user interacted within 30s, don't refresh the DB tab
-                                    if (isEditorActive || timeSinceInteraction < 30000) {
-                                        return;
+                // Only refresh if we are not interacting with a form or modal
+                const activeElement = document.activeElement;
+                const isTyping = activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT';
+                
+                if (!isTyping) {
+                    fetch(window.location.href)
+                        .then(response => response.text())
+                        .then(html => {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(html, 'text/html');
+                            
+                            const tabs = ['control', 'armory', 'db', 'servers', 'billing'];
+                            tabs.forEach(tab => {
+                                const currentTab = document.getElementById(tab);
+                                const newTab = doc.getElementById(tab);
+                                if (currentTab && newTab) {
+                                    // Don't replace the whole tab if it contains the active element
+                                    if (!currentTab.contains(activeElement)) {
+                                        const classes = currentTab.className;
+                                        currentTab.innerHTML = newTab.innerHTML;
+                                        currentTab.className = classes;
                                     }
                                 }
-
-                                const classes = currentTab.className;
-                                currentTab.innerHTML = newTab.innerHTML;
-                                currentTab.className = classes;
-                            }
-                        });
-                    })
-                    .catch(err => console.error('Auto-refresh failed:', err));
-            }, 5000);
-        }
-
-        function copyToClipboard(text, el) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalText = el.innerText;
-                el.innerText = 'Copied!';
-                setTimeout(() => { el.innerText = originalText; }, 1000);
-            });
+                            });
+                        })
+                        .catch(err => console.error('Auto-refresh failed:', err));
+                }
+            }, 2000);
         }
 
         function switchTab(tabName) {
@@ -126,14 +104,6 @@
         <button id="btn-servers" onclick="switchTab('servers')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🖥️ Active Servers</button>
         <button id="btn-billing" onclick="switchTab('billing')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">💳 Billing & Keys</button>
     </div>
-
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const msg = urlParams.get('msg');
-        if (msg) {
-            document.write(`<div class="bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-xl mb-6 relative z-10 font-mono text-sm">${msg}</div>`);
-        }
-    </script>
 
     <!-- CONTROL TAB -->
     <div id="control" class="tab-content grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10 fade-in">
@@ -196,12 +166,12 @@
                             <div class="flex-1">
                                 <div class="flex items-center gap-3 mb-2">
                                     <span class="text-[10px] {% if p.raid_type == 'innocent' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
-                                    <span class="text-white font-bold cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ p.username }}', this)" title="Copy Username">{{ p.username }}</span>
+                                    <span class="text-white font-bold">{{ p.username }}</span>
                                     {% if p.payload_id %}
-                                    <span class="text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5 cursor-pointer hover:bg-cyan-500/20" onclick="copyToClipboard('{{ p.payload_id }}', this)" title="Copy Payload ID">{{ p.payload_id }}</span>
+                                    <span class="text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5">{{ p.payload_id }}</span>
                                     {% endif %}
                                     {% if p.batch_id %}
-                                    <span class="text-[10px] text-white/30 font-mono border border-white/10 px-2 py-0.5 rounded bg-white/5 cursor-pointer hover:bg-white/20" onclick="copyToClipboard('{{ p.batch_id }}', this)" title="Copy Batch ID">{{ p.batch_id }}</span>
+                                    <span class="text-[10px] text-white/30 font-mono border border-white/10 px-2 py-0.5 rounded bg-white/5">{{ p.batch_id }}</span>
                                     {% endif %}
                                 </div>
                                 <p class="text-white/50 font-mono text-sm leading-relaxed">"{{ p.spam_message }}"</p>
@@ -247,9 +217,8 @@
                             </form>
                             
                             {% for doc in docs %}
-                            <div class="text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg cursor-pointer transition-all truncate flex justify-between items-center group/doc" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
-                                <span>📄 {{ doc._id }}</span>
-                                <span class="opacity-0 group-hover/doc:opacity-100 text-cyan-400 hover:text-cyan-300 px-2" onclick="event.stopPropagation(); copyToClipboard('{{ doc._id }}', this)" title="Copy ID">Copy ID</span>
+                            <div class="text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg cursor-pointer transition-all truncate" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
+                                📄 {{ doc._id }}
                             </div>
                             {% endfor %}
                             {% if not docs %}<div class="text-white/20 text-xs italic px-3 py-2">Void sector</div>{% endif %}
@@ -294,7 +263,7 @@
             <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h4 class="text-lg font-bold text-white">{{ s.name }}</h4>
-                    <p class="text-white/50 text-sm font-mono">ID: <span class="cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ s.id }}', this)" title="Copy Server ID">{{ s.id }}</span> | Members: {{ s.member_count }}</p>
+                    <p class="text-white/50 text-sm font-mono">ID: {{ s.id }} | Members: {{ s.member_count }}</p>
                     <div class="mt-2 flex flex-wrap gap-2">
                         {% for mod in s.cooldowns %}
                         <form method="post" action="/admin/server/{{ s.id }}/reset_cooldown/{{ mod }}" class="inline">
@@ -362,50 +331,35 @@
             </div>
         </div>
         
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Active License Keys</h4>
                 {% for k in license_keys %}
-                {% if not k.used %}
                 <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
                     <div>
-                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-cyan-300" onclick="copyToClipboard('{{ k.key }}', this)" title="Copy Key">{{ k.key }}</p>
+                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
                         <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Expires: {{ k.expires_at }}</p>
                     </div>
                     <div>
+                        {% if k.used %}
+                        <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
+                        {% else %}
                         <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Valid</span>
+                        {% endif %}
                     </div>
                 </div>
-                {% endif %}
                 {% endfor %}
                 {% if not license_keys %}
-                <p class="text-white/40 italic text-sm">No active keys.</p>
+                <p class="text-white/40 italic text-sm">No license keys generated.</p>
                 {% endif %}
             </div>
 
             <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Used License Keys</h4>
-                {% for k in license_keys %}
-                {% if k.used %}
-                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center opacity-50">
-                    <div>
-                        <p class="text-white/50 font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
-                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Used by: {{ k.used_by_guild }}</p>
-                    </div>
-                    <div>
-                        <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
-                    </div>
-                </div>
-                {% endif %}
-                {% endfor %}
-            </div>
-
-            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Recent Payments & Gifts</h4>
+                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Recent Payments</h4>
                 {% for p in payments %}
                 <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
                     <div>
-                        <p class="text-white font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ p.guild_id }}', this)" title="Copy Guild ID">Guild: {{ p.guild_id }}</p>
+                        <p class="text-white font-mono text-sm font-bold tracking-wider">Guild: {{ p.guild_id }}</p>
                         <p class="text-white/40 text-[10px] mt-1">Amount: ${{ p.amount }} | Date: {{ p.created_at }}</p>
                     </div>
                     <div>
@@ -417,19 +371,8 @@
                     </div>
                 </div>
                 {% endfor %}
-                {% for g in premium_gifts %}
-                <div class="bg-black/40 border border-purple-500/20 p-4 rounded-xl flex justify-between items-center">
-                    <div>
-                        <p class="text-white font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ g.guild_id }}', this)" title="Copy Guild ID">Guild: {{ g.guild_id }}</p>
-                        <p class="text-white/40 text-[10px] mt-1">Gifted: {{ g.days }} Days | Date: {{ g.granted_at }}</p>
-                    </div>
-                    <div>
-                        <span class="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Gifted</span>
-                    </div>
-                </div>
-                {% endfor %}
-                {% if not payments and not premium_gifts %}
-                <p class="text-white/40 italic text-sm">No payments or gifts recorded.</p>
+                {% if not payments %}
+                <p class="text-white/40 italic text-sm">No payments recorded.</p>
                 {% endif %}
             </div>
         </div>
