@@ -17,14 +17,90 @@
         textarea { resize: vertical; }
         .fade-in { animation: fadeIn 0.4s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Copy button styles */
+        .copy-btn {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            color: #22c55e;
+        }
+        .copied {
+            color: #22c55e !important;
+        }
+        
+        /* Independent dropdown styles */
+        .folder-content {
+            transition: max-height 0.3s ease-out;
+            max-height: 0;
+            overflow: hidden;
+        }
+        .folder-content.open {
+            max-height: 2000px;
+        }
+        
+        /* Inactivity timer indicator */
+        .inactivity-bar {
+            height: 2px;
+            background: linear-gradient(90deg, #ef4444, #f59e0b);
+            width: 100%;
+            transition: width 30s linear;
+        }
+        .folder-header:hover .inactivity-bar {
+            width: 0%;
+        }
     </style>
     <script>
+        // Independent dropdown management with 30s inactivity timeout
+        const dropdownTimers = {};
+        const DROPDOWN_TIMEOUT = 30000; // 30 seconds
+        
+        function toggleFolder(folderId) {
+            const folder = document.getElementById(folderId);
+            const isOpen = folder.classList.contains('open');
+            
+            // Don't close others - allow multiple open
+            if (isOpen) {
+                folder.classList.remove('open');
+                clearTimeout(dropdownTimers[folderId]);
+                delete dropdownTimers[folderId];
+            } else {
+                folder.classList.add('open');
+                resetDropdownTimer(folderId);
+            }
+        }
+        
+        function resetDropdownTimer(folderId) {
+            clearTimeout(dropdownTimers[folderId]);
+            dropdownTimers[folderId] = setTimeout(() => {
+                const folder = document.getElementById(folderId);
+                if (folder) {
+                    folder.classList.remove('open');
+                }
+            }, DROPDOWN_TIMEOUT);
+        }
+        
+        // Copy to clipboard function
+        function copyToClipboard(text, btnId) {
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.getElementById(btnId);
+                const originalText = btn.innerText;
+                btn.innerText = '✓ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.innerText = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+        
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
             if (tab) { switchTab(tab); }
             
-            // Auto-refresh data every 2 seconds
+            // Auto-refresh data every 30 seconds (not 2 seconds - independent of dropdowns)
             setInterval(() => {
                 fetch(window.location.href)
                     .then(response => response.text())
@@ -37,7 +113,10 @@
                             const currentTab = document.getElementById(tab);
                             const newTab = doc.getElementById(tab);
                             if (currentTab && newTab) {
-                                // Don't replace the whole tab if it contains the active element
+                                // Don't replace if user is interacting with dropdowns in db tab
+                                if (tab === 'db' && document.querySelector('.folder-content.open')) {
+                                    return;
+                                }
                                 if (!currentTab.contains(document.activeElement)) {
                                     const classes = currentTab.className;
                                     currentTab.innerHTML = newTab.innerHTML;
@@ -47,7 +126,7 @@
                         });
                     })
                     .catch(err => console.error('Auto-refresh failed:', err));
-            }, 2000);
+            }, 30000); // Changed to 30 seconds
         }
 
         function switchTab(tabName) {
@@ -68,6 +147,18 @@
             btn.classList.add('bg-red-600/20', 'text-red-400', 'border-red-500/30', 'glow-red');
             btn.classList.remove('bg-white/5', 'text-white/50', 'border-white/5');
             window.history.replaceState(null, null, "?tab=" + tabName);
+        }
+        
+        function openDocument(collection, docId, rawJson) {
+            document.getElementById('editor-empty').classList.add('hidden');
+            document.getElementById('editor-active').classList.remove('hidden');
+            document.getElementById('editor-active').classList.add('flex');
+            
+            document.getElementById('editor-title').innerText = collection + ' // ' + docId + '.json';
+            document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
+            
+            document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
+            document.getElementById('form-save-doc').action = '/admin/db/edit_doc/' + collection + '/' + docId;
         }
     </script>
 </head>
@@ -92,11 +183,11 @@
     </header>
 
     <div class="flex flex-wrap gap-4 mb-10 pb-4 relative z-10">
-        <button id="btn-control" onclick="switchTab('control')" class="tab-btn bg-red-600/20 text-red-400 border-red-500/30 glow-red border px-6 py-3 rounded-xl font-bold transition-all duration-300">⚙️ Control Center</button>
-        <button id="btn-armory" onclick="switchTab('armory')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">☣️ Payload Armory</button>
+        <button id="btn-control" onclick="switchTab('control')" class="tab-btn bg-red-600/20 text-red-400 border-red-500/30 glow-red border px-6 py-3 rounded-xl font-bold transition-all duration-300">⚡ Control Center</button>
+        <button id="btn-armory" onclick="switchTab('armory')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🗃️ Payload Armory</button>
         <button id="btn-db" onclick="switchTab('db')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🗄️ Database Matrix</button>
-        <button id="btn-servers" onclick="switchTab('servers')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🖥️ Active Servers</button>
-        <button id="btn-billing" onclick="switchTab('billing')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">💳 Billing & Keys</button>
+        <button id="btn-servers" onclick="switchTab('servers')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">🗂️ Active Servers</button>
+        <button id="btn-billing" onclick="switchTab('billing')" class="tab-btn bg-white/5 text-white/50 hover:text-white border-white/5 border px-6 py-3 rounded-xl font-bold transition-all duration-300">💰 Billing & Keys</button>
     </div>
 
     <!-- CONTROL TAB -->
@@ -112,7 +203,7 @@
                     <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-xl font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95">Toggle Power</button>
                 </form>
             </div>
-            <p class="text-white/40 text-sm mt-6 font-mono">Disabling this severs global !startraid execution.</p>
+            <p class="text-white/40 text-sm mt-6 font-mono">Disabling this serves global !startraid execution.</p>
         </div>
 
         <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
@@ -134,14 +225,14 @@
                 <h3 class="text-3xl font-bold text-white tracking-tight">Classified Armory</h3>
                 <p class="text-white/40 text-sm mt-2 font-mono">Capacity: {{ payloads|length }} / 360 Active (720 Total w/ Backup)</p>
             </div>
-            
+           
             <div class="flex flex-wrap gap-3">
                 <button onclick="window.location.href='/admin?tab=armory'" class="liquid-glass hover:bg-white/10 text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">🔄 Sync</button>
                 <form method="post" action="/admin/force_harvest">
-                    <button type="submit" onclick="this.innerHTML='Compiling...'; this.classList.add('opacity-50');" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/40 px-5 py-2.5 rounded-xl font-bold transition-all text-sm shadow-[0_0_15px_rgba(147,51,234,0.2)]">⚡ Force Generation</button>
+                    <button type="submit" onclick="this.innerHTML='Compiling...'; this.classList.add('opacity-50');" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/40 px-5 py-2.5 rounded-xl font-bold transition-all text-sm shadow-[0_0_15px_rgba(147,51,234,0.2)]">⚗️ Force Generation</button>
                 </form>
                 <form method="post" action="/admin/purge_armory" onsubmit="return confirm('CRITICAL WARNING: This will vaporize all payloads globally. Proceed?');">
-                    <button type="submit" class="bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-600 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">⚠️ PURGE</button>
+                    <button type="submit" class="bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-600 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">☠️ PURGE</button>
                 </form>
             </div>
         </div>
@@ -150,7 +241,7 @@
             <div class="space-y-8 max-h-[600px] overflow-y-auto pr-4">
             {% for raid_type, type_payloads in payloads|groupby('raid_type') %}
                 <div class="fade-in">
-                    <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 flex justify-between">
+                   <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 flex justify-between">
                         <span class="text-red-400">{{ raid_type|replace('_', ' ') }} PROTOCOLS</span>
                         <span class="bg-white/5 px-2 py-1 rounded">{{ type_payloads|length }} Stored</span>
                     </h4>
@@ -162,7 +253,7 @@
                                     <span class="text-[10px] {% if p.raid_type == 'innocent' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
                                     <span class="text-white font-bold">{{ p.username }}</span>
                                     {% if p.payload_id %}
-                                    <span class="text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5">{{ p.payload_id }}</span>
+                                    <span class="text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5 copyable" onclick="copyToClipboard('{{ p.payload_id }}', 'payload-{{ p._id }}')" id="payload-{{ p._id }}" title="Click to copy">{{ p.payload_id }}</span>
                                     {% endif %}
                                     {% if p.batch_id %}
                                     <span class="text-[10px] text-white/30 font-mono border border-white/10 px-2 py-0.5 rounded bg-white/5">{{ p.batch_id }}</span>
@@ -174,14 +265,14 @@
                                 <button class="text-red-400/50 hover:text-red-400 hover:bg-red-500/10 px-4 py-2 rounded-lg text-sm font-bold transition-all">Delete</button>
                             </form>
                         </div>
-                    {% endfor %}
+                     {% endfor %}
                     </div>
                 </div>
             {% endfor %}
             </div>
         {% else %}
             <div class="text-center py-20 border border-dashed border-white/10 rounded-2xl">
-                <span class="text-4xl mb-4 block">🕸️</span>
+                <span class="text-4xl mb-4 block">👻</span>
                 <p class="text-white/40 italic">Armory is hollow. Initialize generation protocol.</p>
             </div>
         {% endif %}
@@ -193,26 +284,27 @@
             
             <div class="w-full md:w-1/3 border-r border-white/5 overflow-y-auto p-6 bg-black/20">
                 <h3 class="text-white/40 font-bold text-xs uppercase tracking-widest mb-6 flex justify-between items-center">
-                    Cluster: Sylas_Core
+                   Cluster: Sylas_Core
                     <span class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[10px] animate-pulse">UPLINKED</span>
                 </h3>
                 
                 <div class="space-y-4">
                     {% for coll_name, docs in db_structure.items() %}
                     <div class="bg-white/5 rounded-xl border border-white/5 overflow-hidden">
-                        <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-white/5 transition-colors group" onclick="document.getElementById('folder-{{ coll_name }}').classList.toggle('hidden')">
+                        <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-white/5 transition-colors group folder-header" onclick="toggleFolder('folder-{{ coll_name }}')" onmouseenter="resetDropdownTimer('folder-{{ coll_name }}')">
                             <span class="text-white/80 font-semibold text-sm flex items-center gap-2 group-hover:text-white transition-colors">📁 {{ coll_name }}</span>
                             <span class="text-xs text-white/30 font-mono">{{ docs|length }} docs</span>
+                            <div class="inactivity-bar"></div>
                         </div>
                         
-                        <div id="folder-{{ coll_name }}" class="hidden bg-black/40 p-2 space-y-1 border-t border-white/5">
+                        <div id="folder-{{ coll_name }}" class="folder-content bg-black/40 p-2 space-y-1 border-t border-white/5">
                             <form method="post" action="/admin/db/drop_collection/{{ coll_name }}" onsubmit="return confirm('SUDO WARNING: Erasing collection matrix. Proceed?');">
-                                <button type="submit" class="text-[10px] uppercase font-black text-red-500/70 hover:bg-red-500/20 hover:text-red-400 px-3 py-2 rounded w-full text-left transition-all mb-1">⚠️ Drop Target</button>
+                                <button type="submit" class="text-[10px] uppercase font-black text-red-500/70 hover:bg-red-500/20 hover:text-red-400 px-3 py-2 rounded w-full text-left transition-all mb-1">☠️ Drop Target</button>
                             </form>
                             
                             {% for doc in docs %}
                             <div class="text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg cursor-pointer transition-all truncate" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
-                                📄 {{ doc._id }}
+                                📝 <span class="copyable" onclick="event.stopPropagation(); copyToClipboard('{{ doc._id }}', 'doc-{{ doc._id }}')" id="doc-{{ doc._id }}" title="Click to copy ID">{{ doc._id }}</span>
                             </div>
                             {% endfor %}
                             {% if not docs %}<div class="text-white/20 text-xs italic px-3 py-2">Void sector</div>{% endif %}
@@ -224,7 +316,7 @@
 
             <div class="w-full md:w-2/3 flex flex-col bg-[#030305]/80 relative backdrop-blur-3xl">
                 <div id="editor-empty" class="absolute inset-0 flex items-center justify-center flex-col text-white/20">
-                    <span class="text-6xl mb-6 opacity-50 block animate-pulse">⟁</span>
+                    <span class="text-6xl mb-6 opacity-50 block animate-pulse">⌘</span>
                     <p class="font-mono text-sm tracking-widest uppercase">Awaiting Selection</p>
                 </div>
                 
@@ -254,15 +346,23 @@
         <h3 class="text-3xl font-bold text-white tracking-tight mb-8">Active Servers</h3>
         <div class="grid gap-4">
             {% for s in servers %}
-            <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 {% if s.is_premium %}border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.1)]{% endif %}">
                 <div>
-                    <h4 class="text-lg font-bold text-white">{{ s.name }}</h4>
-                    <p class="text-white/50 text-sm font-mono">ID: {{ s.id }} | Members: {{ s.member_count }}</p>
+                    <h4 class="text-lg font-bold text-white flex items-center gap-2">
+                        {{ s.name }}
+                        {% if s.is_premium %}
+                        <span class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded font-black uppercase tracking-wider">💎 Premium</span>
+                        {% endif %}
+                    </h4>
+                    <p class="text-white/50 text-sm font-mono">
+                        ID: <span class="copyable cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ s.id }}', 'server-id-{{ s.id }}')" id="server-id-{{ s.id }}" title="Click to copy">{{ s.id }}</span> | 
+                        Members: {{ s.member_count }}
+                    </p>
                     <div class="mt-2 flex flex-wrap gap-2">
                         {% for mod in s.cooldowns %}
                         <form method="post" action="/admin/server/{{ s.id }}/reset_cooldown/{{ mod }}" class="inline">
                             <button title="Reset {{ mod }} cooldown" class="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded font-black uppercase tracking-wider hover:bg-red-500/30 transition-colors">
-                                {{ mod }} ✕
+                                {{ mod }} ⌛
                             </button>
                         </form>
                         {% endfor %}
@@ -302,7 +402,7 @@
             </div>
             <div class="bg-black/40 border border-white/5 p-6 rounded-xl">
                 <h4 class="text-white/50 text-xs font-bold uppercase tracking-widest mb-2">Active Keys</h4>
-                <p class="text-4xl font-black text-cyan-400">{{ license_keys|length }}</p>
+                <p class="text-4xl font-black text-cyan-400">{{ active_keys|length }}</p>
             </div>
         </div>
 
@@ -325,65 +425,82 @@
             </div>
         </div>
         
+        <!-- Active Keys Section -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Active License Keys</h4>
-                {% for k in license_keys %}
+                {% for k in active_keys %}
                 <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
                     <div>
-                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
+                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-cyan-300" onclick="copyToClipboard('{{ k.key }}', 'key-{{ k._id }}')" id="key-{{ k._id }}" title="Click to copy">{{ k.key }}</p>
                         <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Expires: {{ k.expires_at }}</p>
                     </div>
                     <div>
-                        {% if k.used %}
-                        <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
-                        {% else %}
                         <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Valid</span>
-                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
-                {% if not license_keys %}
-                <p class="text-white/40 italic text-sm">No license keys generated.</p>
+                {% if not active_keys %}
+                <p class="text-white/40 italic text-sm">No active license keys.</p>
                 {% endif %}
             </div>
 
+            <!-- Used Keys Section -->
             <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Recent Payments</h4>
-                {% for p in payments %}
-                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
+                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Used License Keys</h4>
+                {% for k in used_keys %}
+                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center opacity-50">
                     <div>
-                        <p class="text-white font-mono text-sm font-bold tracking-wider">Guild: {{ p.guild_id }}</p>
-                        <p class="text-white/40 text-[10px] mt-1">Amount: ${{ p.amount }} | Date: {{ p.created_at }}</p>
+                        <p class="text-red-400/70 font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
+                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Used</p>
                     </div>
                     <div>
-                        {% if p.status == 'paid' %}
-                        <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Paid</span>
-                        {% else %}
-                        <span class="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">{{ p.status }}</span>
-                        {% endif %}
+                        <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
                     </div>
                 </div>
                 {% endfor %}
-                {% if not payments %}
-                <p class="text-white/40 italic text-sm">No payments recorded.</p>
+                {% if not used_keys %}
+                <p class="text-white/40 italic text-sm">No used license keys.</p>
                 {% endif %}
             </div>
         </div>
-    </div>
 
-    <script>
-        function openDocument(collection, docId, rawJson) {
-            document.getElementById('editor-empty').classList.add('hidden');
-            document.getElementById('editor-active').classList.remove('hidden');
-            document.getElementById('editor-active').classList.add('flex');
-            
-            document.getElementById('editor-title').innerText = collection + ' // ' + docId + '.json';
-            document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
-            
-            document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
-            document.getElementById('form-save-doc').action = '/admin/db/edit_doc/' + collection + '/' + docId;
-        }
-    </script>
+        <!-- Recent Payments with Gift Log -->
+        <div class="mt-8 space-y-4 max-h-[400px] overflow-y-auto pr-2">
+            <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Recent Payments & Gifts</h4>
+            {% for p in payments %}
+            <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
+                <div>
+                    <p class="text-white font-mono text-sm font-bold tracking-wider">
+                        Guild: <span class="copyable cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ p.guild_id }}', 'pay-guild-{{ p._id }}')" id="pay-guild-{{ p._id }}" title="Click to copy">{{ p.guild_id }}</span>
+                        {% if p.status == 'gifted' %}
+                        <span class="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-1 rounded ml-2">GIFT</span>
+                        {% endif %}
+                    </p>
+                    <p class="text-white/40 text-[10px] mt-1">
+                        {% if p.status == 'gifted' %}
+                        Days Gifted: {{ p.days }} | By Admin: {{ p.gifted_by }}
+                        {% else %}
+                        Amount: ${{ p.amount }} | Days: {{ p.days }}
+                        {% endif %}
+                        | Date: {{ p.created_at }}
+                    </p>
+                </div>
+                <div>
+                    {% if p.status == 'paid' %}
+                    <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Paid</span>
+                    {% elif p.status == 'gifted' %}
+                    <span class="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Gifted</span>
+                    {% else %}
+                    <span class="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">{{ p.status }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% if not payments %}
+            <p class="text-white/40 italic text-sm">No payments or gifts recorded.</p>
+            {% endif %}
+        </div>
+    </div>
 </body>
 </html>
