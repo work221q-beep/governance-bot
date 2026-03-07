@@ -200,7 +200,13 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
             if m.bot: bots.append(member_data)
             else: users.append(member_data)
                 
-        for c in guild.channels:
+        sorted_channels = []
+        for category, channels_in_cat in guild.by_category():
+            if category:
+                sorted_channels.append(category)
+            sorted_channels.extend(channels_in_cat)
+            
+        for c in sorted_channels:
             channels.append({"id": str(c.id), "name": c.name, "type": str(c.type)})
 
     return templates.TemplateResponse("permissions.html", {
@@ -502,9 +508,22 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     channel = guild.get_channel(int(channel_id))
     role = guild.get_role(int(role_id)) if role_id else guild.default_role
     
+    session_user = serializer.loads(user_cookie)
+    web_member = guild.get_member(int(session_user.get("id")))
+
+    if web_member and guild.owner_id != web_member.id and web_member.top_role <= role:
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You cannot edit channel permissions for a role equal to or higher than your own.&error_title=Hierarchy Error", status_code=303)
+    
     if channel and role:
         overwrite = channel.overwrites_for(role)
-        for perm in["view_channel", "send_messages", "embed_links", "attach_files", "manage_messages"]:
+        extended_perms = [
+            "view_channel", "send_messages", "embed_links", "attach_files", "manage_messages",
+            "read_message_history", "mention_everyone", "use_external_emojis", "add_reactions",
+            "connect", "speak", "mute_members", "deafen_members", "move_members", "use_voice_activation",
+            "request_to_speak", "manage_events", "send_messages_in_threads", "create_public_threads",
+            "create_private_threads", "manage_threads"
+        ]
+        for perm in extended_perms:
             val = form_data.get(perm)
             if val == "allow": setattr(overwrite, perm, True)
             elif val == "deny": setattr(overwrite, perm, False)
@@ -514,6 +533,82 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
             await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
         except discord.Forbidden:
             return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to manage this channel.&error_title=Channel Access Denied", status_code=303)
+            
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
+
+@app.post("/server/{guild_id}/channel/create")
+async def create_channel(request: Request, guild_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    form_data = await request.form()
+    channel_name = form_data.get("channel_name")
+    channel_type = form_data.get("channel_type")
+    
+    guild = bot.get_guild(int(guild_id))
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
+    session_user = serializer.loads(user_cookie)
+    web_member = guild.get_member(int(session_user.get("id")))
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
+        
+    try:
+        if channel_type == "text":
+            await guild.create_text_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "voice":
+            await guild.create_voice_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "category":
+            await guild.create_category(name=channel_name, reason="Sylas Web Admin: Category Created")
+    except discord.Forbidden:
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to create channels.&error_title=Permission Denied", status_code=303)
+        
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
+
+@app.post("/server/{guild_id}/channel/{channel_id}/delete")
+async def delete_channel(request: Request, guild_id: str, channel_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    guild = bot.get_guild(int(guild_id))
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
+    session_user = serializer.loads(user_cookie)
+    web_member = guild.get_member(int(session_user.get("id")))
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
+        
+    channel = guild.get_channel(int(channel_id))
+    if channel:
+        try:
+            await channel.delete(reason="Sylas Web Admin: Channel Deleted")
+        except discord.Forbidden:
+            return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to delete this channel.&error_title=Permission Denied", status_code=303)
+            
+    return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
+
+@app.post("/server/{guild_id}/channel/{channel_id}/rename")
+async def rename_channel(request: Request, guild_id: str, channel_id: str):
+    user_cookie = request.cookies.get("session")
+    if not user_cookie: return RedirectResponse("/login")
+    
+    form_data = await request.form()
+    new_name = form_data.get("new_name")
+    
+    guild = bot.get_guild(int(guild_id))
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
+    session_user = serializer.loads(user_cookie)
+    web_member = guild.get_member(int(session_user.get("id")))
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
+        
+    channel = guild.get_channel(int(channel_id))
+    if channel:
+        try:
+            await channel.edit(name=new_name, reason="Sylas Web Admin: Channel Renamed")
+        except discord.Forbidden:
+            return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to rename this channel.&error_title=Permission Denied", status_code=303)
             
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
@@ -566,12 +661,17 @@ async def admin_panel(request: Request, key: str = None):
     # Chain2Pay might send "paid" or "completed", so we'll check for "paid"
     all_payments = await payments.find({"status": "paid"}).sort("created_at", -1).to_list(1000)
     total_revenue = sum(float(p.get("amount", 0)) for p in all_payments)
+    
+    # Get gift logs
+    from db import gift_logs
+    all_gifts = await gift_logs.find().sort("timestamp", -1).to_list(100)
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
         "ai_status": "ONLINE", "db_structure": db_structure,
         "servers": servers, "license_keys": keys,
-        "payments": all_payments, "total_revenue": total_revenue
+        "payments": all_payments, "total_revenue": total_revenue,
+        "gift_logs": all_gifts
     })
 
 @app.post("/admin/toggle_bot")
@@ -674,8 +774,18 @@ async def admin_gift_premium(request: Request):
     if request.cookies.get("admin_auth") != "true": return RedirectResponse("/")
     form = await request.form()
     guild_id = form.get("guild_id")
-    days = int(form.get("days", 30))
+    days_str = form.get("days", "30")
+    days = int(days_str) if days_str and days_str.isdigit() else 30
     from premium import grant_premium
+    from db import gift_logs
+    from datetime import datetime, timezone
+    
     if guild_id:
         await grant_premium(guild_id, days)
+        await gift_logs.insert_one({
+            "guild_id": guild_id,
+            "days": days,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return RedirectResponse(f"/admin?tab=billing&msg=Successfully+gifted+{days}+days+to+{guild_id}", status_code=303)
     return RedirectResponse("/admin?tab=billing", status_code=303)

@@ -12,6 +12,7 @@ guild_premium = db.guild_premium       # NEW: Tracks active subscriptions
 guild_cooldowns = db.guild_cooldowns   # NEW: Tracks wargame usage
 license_keys = db.license_keys         # NEW: Tracks premium license keys
 payments = db.payments                 # NEW: Tracks Chain2Pay payments
+gift_logs = db.gift_logs               # NEW: Tracks admin gifting logs
 
 async def init_indexes():
     await payload_armory.create_index("raid_type")
