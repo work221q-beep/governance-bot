@@ -12,6 +12,7 @@ engine_state = {"active": True}
 active_wargames = {}
 pending_dropdowns = {} 
 active_guild_sessions = set() # Guild-Level Session Lock
+startraid_abort_confirm = {} # Track /startraid double-tap
 
 class PremiumUpgradeView(discord.ui.View):
     def __init__(self, guild_id):
@@ -102,28 +103,36 @@ async def start_raid(interaction: discord.Interaction):
 
     # Cancel existing wargame if one is active
     if interaction.guild.id in active_guild_sessions:
-        for game_id, wargame in list(active_wargames.items()):
-            channel = bot.get_channel(wargame["channel_id"])
-            if channel and channel.guild.id == interaction.guild.id:
-                wargame["cancelled"] = True
-                if wargame.get("attempts", 0) > 0:
-                    await set_cooldown(wargame["guild_id"], wargame["raid_type"])
-                
-        to_remove = []
-        for msg_id, msg in pending_dropdowns.items():
-            if msg.guild and msg.guild.id == interaction.guild.id:
-                to_remove.append(msg_id)
-                try: await msg.delete()
-                except: pass
-                
-        for m_id in to_remove:
-            pending_dropdowns.pop(m_id, None)
+        now = discord.utils.utcnow()
+        last_attempt = startraid_abort_confirm.get(interaction.guild.id)
+        
+        if last_attempt and (now - last_attempt).total_seconds() < 15:
+            startraid_abort_confirm.pop(interaction.guild.id, None)
             
-        if interaction.guild.id in active_guild_sessions:
-            active_guild_sessions.remove(interaction.guild.id)
+            for game_id, wargame in list(active_wargames.items()):
+                channel = bot.get_channel(wargame["channel_id"])
+                if channel and channel.guild.id == interaction.guild.id:
+                    wargame["cancelled"] = True
+                    
+            to_remove = []
+            for msg_id, msg in pending_dropdowns.items():
+                if msg.guild and msg.guild.id == interaction.guild.id:
+                    to_remove.append(msg_id)
+                    try: await msg.delete()
+                    except: pass
+                    
+            for m_id in to_remove:
+                pending_dropdowns.pop(m_id, None)
+                
+            if interaction.guild.id in active_guild_sessions:
+                active_guild_sessions.remove(interaction.guild.id)
 
-        await interaction.response.send_message("🛑 **Active wargame terminated.** You cannot start a new wargame while one is already deploying or active. Cooldown rules have been applied if attempts were made.", ephemeral=True, delete_after=10.0)
-        return
+            await interaction.response.send_message("🛑 **Active wargame terminated.** Cooldown rules have been applied if attempts were made.", ephemeral=True, delete_after=10.0)
+            return
+        else:
+            startraid_abort_confirm[interaction.guild.id] = now
+            await interaction.response.send_message("⚠️ **A wargame is already active.** Type `/startraid` again within 15 seconds to abort it, or use `/endraid`.", ephemeral=True, delete_after=15.0)
+            return
 
     active_guild_sessions.add(interaction.guild.id)
 
@@ -157,8 +166,6 @@ async def end_raid(interaction: discord.Interaction):
         if channel and channel.guild.id == interaction.guild.id:
             wargame["cancelled"] = True
             killed_active_game = True
-            if wargame.get("attempts", 0) > 0:
-                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
             
     # 2. Kill pending dropdown menus
     to_remove = []
@@ -176,7 +183,7 @@ async def end_raid(interaction: discord.Interaction):
         active_guild_sessions.remove(interaction.guild.id)
 
     if killed_active_game:
-        await interaction.response.send_message("🛑 **Wargame Forcefully Terminated.** All active threats disengaged.")
+        await interaction.response.send_message("🛑 **Active wargame terminated.** Cooldown rules have been applied if attempts were made.", ephemeral=True, delete_after=10.0)
     else:
         await interaction.response.send_message("🛑 **Deployment Cancelled.**", ephemeral=True)
 
@@ -264,9 +271,20 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             # Set cooldown since the wargame completed or failed normally, but only if they attempted at least 1 deletion OR if it wasn't a timeout with 0 attempts
             if wargame.get("attempts", 0) > 0 or (wargame["scams_left"] == 0 and not wargame["failed"]):
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
-        elif wargame and wargame.get("cancelled") and wargame.get("attempts", 0) > 0:
+        elif wargame and wargame.get("cancelled"):
             # Set cooldown if cancelled but they attempted at least 1 deletion
-            await set_cooldown(wargame["guild_id"], wargame["raid_type"])
+            if wargame.get("attempts", 0) > 0:
+                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
+                
+            if wargame.get("cancelled_reason") == "purge":
+                async def send_purge_msg():
+                    await asyncio.sleep(5)
+                    try:
+                        channel = bot.get_channel(wargame["channel_id"])
+                        if channel:
+                            await channel.send("🛑 **Wargame Cancelled.** Dropdown menu or status message was deleted by a moderator.", delete_after=10.0)
+                    except: pass
+                bot.loop.create_task(send_purge_msg())
             
         active_wargames.pop(game_id, None)
 
@@ -287,10 +305,16 @@ async def on_message_delete(message):
         original_cmd_msg = pending_dropdowns.pop(message.id)
         if message.guild.id in active_guild_sessions:
             active_guild_sessions.remove(message.guild.id)
-        try:
-            await message.channel.send("🛑 **Wargame Cancelled.** Dropdown menu was deleted by a moderator.", delete_after=5.0)
-            await original_cmd_msg.delete()
-        except: pass
+            
+        async def delayed_cancel():
+            await asyncio.sleep(5)
+            try:
+                await message.channel.send("🛑 **Wargame Cancelled.** Dropdown menu was deleted by a moderator.", delete_after=10.0)
+            except: pass
+            try: await original_cmd_msg.delete()
+            except: pass
+            
+        bot.loop.create_task(delayed_cancel())
         return
 
     for game_id, wargame in list(active_wargames.items()):
@@ -298,9 +322,7 @@ async def on_message_delete(message):
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True
-                try:
-                    await message.channel.send("🛑 **Wargame Cancelled.** Dropdown menu or status message was deleted by a moderator.", delete_after=5.0)
-                except: pass
+                wargame["cancelled_reason"] = "purge"
             continue
 
         if message.id in wargame["msg_map"]:
