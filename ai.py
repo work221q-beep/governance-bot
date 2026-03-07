@@ -132,9 +132,7 @@ async def harvest_payloads(raid_type: str):
                     await payload_armory.insert_many(inserts)
                     print(f"⚡ Harvester generated {len(inserts)} {raid_type} payloads.")
                     return len(inserts)
-            except Exception as e:
-                print(f"⚠️ Harvester error with model {model}: {e}")
-                pass
+            except: pass
     return 0
 
 async def parallel_harvest_sweep():
