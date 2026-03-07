@@ -394,15 +394,12 @@ async def buy_premium(request: Request, guild_id: str):
 
 @app.get("/api/webhooks/payment")
 async def payment_webhook(request: Request):
+    import httpx
     from db import payments
-    from premium import generate_license_key, redeem_license_key
-    from bot import bot
+    from premium import grant_premium, generate_license_key, redeem_license_key
     
     # The webhook sends chain2pay_order_id, txid_out, value_coin, coin
     c2p_order_id = request.query_params.get("chain2pay_order_id")
-    value_coin = request.query_params.get("value_coin")
-    txid_out = request.query_params.get("txid_out")
-    
     if not c2p_order_id:
         return {"status": "ignored"}
         
@@ -410,28 +407,38 @@ async def payment_webhook(request: Request):
     if not payment or payment["status"] == "paid":
         return {"status": "ok"}
         
-    # Verify amount paid is correct
-    paid_amount = float(value_coin) if value_coin else 0.0
-    expected_amount = float(payment["amount"])
-    
-    if paid_amount >= expected_amount * 0.95: # 5% slippage tolerance for crypto
-        await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "paid", "txid_out": txid_out}})
-        
-        # Generate and redeem key automatically
-        key = await generate_license_key(payment["days"])
-        await redeem_license_key(payment["guild_id"], key)
-        
-        # Try to DM user
-        try:
-            user = await bot.fetch_user(int(payment["user_id"]))
-            if user:
-                guild = bot.get_guild(int(payment["guild_id"]))
-                guild_name = guild.name if guild else "your server"
-                await user.send(f"🎉 **Payment Successful!**\n\nYour subscription for **{guild_name}** has been activated.\n**License Key:** `{key}` (Auto-redeemed)\n**Duration:** {payment['days']} Days\n**Transaction ID:** `{txid_out}`\n\nThank you for upgrading to Sylas Premium!")
-        except:
-            pass
-    else:
-        print(f"Payment amount mismatch: Expected {expected_amount}, got {paid_amount}")
+    ipn_token = payment.get("ipn_token")
+    if ipn_token:
+        async with httpx.AsyncClient() as client:
+            try:
+                # Anti-fraud: Verify payment status directly with Chain2Pay API
+                resp = await client.get(f"https://api.chain2pay.cloud/control/payment-status.php?ipn_token={ipn_token}")
+                data = resp.json()
+                if data.get("status") == "paid":
+                    # Verify amount paid is correct
+                    paid_amount = float(data.get("value_coin", 0))
+                    expected_amount = float(payment["amount"])
+                    
+                    if paid_amount >= expected_amount * 0.95: # 5% slippage tolerance for stablecoins
+                        await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "paid", "txid_out": data.get("txid_out")}})
+                        
+                        # Generate and redeem key automatically
+                        key = await generate_license_key(payment["days"])
+                        await redeem_license_key(payment["guild_id"], key)
+                        
+                        # Try to DM user
+                        try:
+                            user = await bot.fetch_user(int(payment["user_id"]))
+                            if user:
+                                guild = bot.get_guild(int(payment["guild_id"]))
+                                guild_name = guild.name if guild else "your server"
+                                await user.send(f"🎉 **Payment Successful!**\n\nYour subscription for **{guild_name}** has been activated.\n**License Key:** `{key}` (Auto-redeemed)\n**Duration:** {payment['days']} Days\n\nThank you for upgrading to Sylas Premium!")
+                        except:
+                            pass
+                    else:
+                        print(f"Payment amount mismatch: Expected {expected_amount}, got {paid_amount}")
+            except Exception as e:
+                print("Webhook verification failed:", e)
                 
     return {"status": "ok"}
 
@@ -558,14 +565,13 @@ async def admin_panel(request: Request, key: str = None):
         
     # Get license keys
     from db import license_keys, payments
-    keys = await license_keys.find({"used": False}).sort("expires_at", -1).to_list(1000)
+    keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
     for k in keys:
         k["_id"] = str(k["_id"])
         
     # Get payments and revenue
-    # Chain2Pay might send "paid" or "completed", so we'll check for "paid"
-    all_payments = await payments.find({"status": "paid"}).sort("created_at", -1).to_list(1000)
-    total_revenue = sum(float(p.get("amount", 0)) for p in all_payments)
+    all_payments = await payments.find().sort("created_at", -1).to_list(1000)
+    total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
