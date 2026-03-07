@@ -43,6 +43,8 @@ async def is_guild_premium(guild_id: int) -> bool:
     # Check if expired
     if datetime.utcnow() > sub["expires_at"]:
         await guild_premium.delete_one({"guild_id": str(guild_id)})
+        # Reset cooldowns for premium modules when premium expires
+        await guild_cooldowns.delete_many({"guild_id": str(guild_id), "raid_type": {"$in": PREMIUM_FEATURES}})
         return False
         
     return True
