@@ -154,6 +154,31 @@
 
         function closeChannelModal() { document.getElementById('channel-modal').classList.add('hidden'); }
 
+        function openCreateChannelModal() {
+            let modal = document.getElementById('create-channel-modal');
+            modal.classList.remove('hidden');
+            modal.querySelector('.modal-content').classList.add('modal-enter');
+        }
+        function closeCreateChannelModal() { document.getElementById('create-channel-modal').classList.add('hidden'); }
+
+        function openRenameChannelModal(channelId, channelName) {
+            document.getElementById('rename-channel-name').value = channelName;
+            let modal = document.getElementById('rename-channel-modal');
+            modal.classList.remove('hidden');
+            modal.querySelector('.modal-content').classList.add('modal-enter');
+            document.getElementById('rename-channel-form').action = `/server/{{ guild_id }}/channel/${channelId}/rename`;
+        }
+        function closeRenameChannelModal() { document.getElementById('rename-channel-modal').classList.add('hidden'); }
+
+        function openDeleteChannelModal(channelId, channelName) {
+            document.getElementById('delete-channel-name').innerText = channelName;
+            let modal = document.getElementById('delete-channel-modal');
+            modal.classList.remove('hidden');
+            modal.querySelector('.modal-content').classList.add('modal-enter');
+            document.getElementById('delete-channel-form').action = `/server/{{ guild_id }}/channel/${channelId}/delete`;
+        }
+        function closeDeleteChannelModal() { document.getElementById('delete-channel-modal').classList.add('hidden'); }
+
         function openModModal(action, targetId, targetName) {
             let actionCap = action.charAt(0).toUpperCase() + action.slice(1);
             document.getElementById('mod-modal-title').innerText = `Execute ${actionCap}: ${targetName}`;
@@ -170,6 +195,36 @@
         }
 
         function closeModModal() { document.getElementById('mod-modal').classList.add('hidden'); }
+
+        function copyToClipboard(text, element) {
+            const copy = () => {
+                const originalHTML = element.innerHTML;
+                element.innerHTML = '<svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                setTimeout(() => {
+                    element.innerHTML = originalHTML;
+                }, 2000);
+            };
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(copy);
+            } else {
+                let textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.position = "fixed";
+                textArea.style.left = "-999999px";
+                textArea.style.top = "-999999px";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    copy();
+                } catch (err) {
+                    console.error('Fallback: Oops, unable to copy', err);
+                }
+                document.body.removeChild(textArea);
+            }
+        }
     </script>
 </head>
 <body class="flex h-screen overflow-hidden relative">
@@ -197,7 +252,12 @@
         <div class="p-6 border-b border-white/5">
             <h1 class="text-3xl font-black tracking-widest text-white">SYLAS <span class="text-[#ff003c]">AI</span></h1>
             <div class="flex items-center gap-2 mt-2">
-                <p class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-block px-3 py-1 rounded bg-white/5 shadow-inner">{{ guild_name }}</p>
+                <p class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-flex items-center gap-2 px-3 py-1 rounded bg-white/5 shadow-inner">
+                    {{ guild_name }}
+                    <button type="button" onclick="copyToClipboard('{{ guild_id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Guild ID">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    </button>
+                </p>
                 {% if has_premium %}
                 <span class="text-[10px] bg-gradient-to-r from-[#ff003c] to-[#7000ff] text-white px-2 py-0.5 rounded font-bold uppercase tracking-widest shadow-[0_0_10px_rgba(255,0,60,0.3)] flex items-center gap-1">
                     💎 Premium
@@ -299,10 +359,13 @@
                         <div class="bg-black/40 px-6 py-4 flex justify-between items-center {% if role.can_edit %}cursor-pointer hover:bg-white/[0.02]{% endif %} select-none" {% if role.can_edit %}onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')"{% endif %}>
                             <div class="flex items-center gap-4">
                                 {% if not role.is_everyone %}<span class="w-4 h-4 rounded-full shadow-inner border border-white/20" style="background-color: {{ role.color }};"></span>{% endif %}
-                                <h3 class="text-xl font-bold text-white flex items-center">
+                                <h3 class="text-xl font-bold text-white flex items-center gap-2">
                                     {{ role.name }}
-                                    {% if role.is_everyone %}<span class="text-[10px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-3 shadow-[0_0_10px_rgba(255,0,60,0.2)]">Base Layer</span>{% endif %}
-                                    {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-3">Integration</span>{% endif %}
+                                    <button type="button" onclick="event.stopPropagation(); copyToClipboard('{{ role.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Role ID">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                    {% if role.is_everyone %}<span class="text-[10px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1 shadow-[0_0_10px_rgba(255,0,60,0.2)]">Base Layer</span>{% endif %}
+                                    {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1">Integration</span>{% endif %}
                                 </h3>
                             </div>
                             <div class="flex items-center gap-4">
@@ -403,7 +466,21 @@
                         {% endif %}
                         <div>
                             <span class="font-bold text-white text-lg block">{{ m.display_name }}</span>
-                            <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 mt-1 inline-block">{{ m.name }} | Role: {{ m.top_role }}</span>
+                            <div class="flex flex-wrap items-center gap-2 mt-1">
+                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                    {{ m.name }}
+                                    <button type="button" onclick="copyToClipboard('{{ m.name }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Username">
+                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                </span>
+                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                    ID: {{ m.id }}
+                                    <button type="button" onclick="copyToClipboard('{{ m.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy User ID">
+                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                </span>
+                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5">Role: {{ m.top_role }}</span>
+                            </div>
                         </div>
                     </div>
                     <div class="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
@@ -426,8 +503,21 @@
                             <div class="w-12 h-12 bg-cyan-900/30 border border-cyan-500/30 rounded-full flex items-center justify-center font-bold text-cyan-400">{{ m.name[0] }}</div>
                         {% endif %}
                         <div>
-                            <span class="font-bold text-cyan-400 text-lg block drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]">{{ m.name }}</span>
-                            <span class="text-xs text-white/40 font-mono mt-1 block">Role: {{ m.top_role }}</span>
+                            <span class="font-bold text-cyan-400 text-lg flex items-center gap-2 drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]">
+                                {{ m.name }}
+                                <button type="button" onclick="copyToClipboard('{{ m.name }}', this)" class="text-cyan-400/50 hover:text-cyan-400 transition-colors" title="Copy Bot Name">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                </button>
+                            </span>
+                            <div class="flex flex-wrap items-center gap-2 mt-1">
+                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                    ID: {{ m.id }}
+                                    <button type="button" onclick="copyToClipboard('{{ m.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Bot ID">
+                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                </span>
+                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5">Role: {{ m.top_role }}</span>
+                            </div>
                         </div>
                     </div>
                     <button onclick="openModModal('kick', '{{ m.id }}', '{{ m.name }}')" class="bg-red-500/10 border border-red-500/30 hover:bg-red-500/30 text-red-400 px-5 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all opacity-0 group-hover:opacity-100">Eject</button>
@@ -436,7 +526,12 @@
             </div>
 
             <!-- CHANNELS -->
-            <div id="channels" class="tab-content hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="channels" class="tab-content hidden">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-black text-white">Channel Matrix</h3>
+                    <button onclick="openCreateChannelModal()" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-4 py-2 rounded-lg transition-all shadow-[0_0_15px_rgba(6,182,212,0.4)] text-sm uppercase tracking-widest">+ Create Channel</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {% for c in channels %}
                 {% if c.type == 'text' or c.type == 'voice' or c.type == 'category' or c.type == 'news' %}
                 <div class="liquid-glass border border-white/5 hover:border-white/30 p-5 rounded-2xl flex justify-between items-center transition-all cursor-pointer group hover:bg-white/[0.03]" onclick="openChannelModal('{{ c.id }}', '{{ c.name }}')">
@@ -450,12 +545,24 @@
                         {% elif c.type == 'category' %}
                         <svg class="w-6 h-6 text-white/20 group-hover:text-white/50 transition-colors shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                         {% endif %}
-                        <span class="font-bold text-white text-lg truncate">{{ c.name }}</span>
+                        <span class="font-bold text-white text-lg truncate flex items-center gap-2">
+                            {{ c.name }}
+                            <button type="button" onclick="event.stopPropagation(); copyToClipboard('{{ c.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Channel ID">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            </button>
+                        </span>
                     </div>
-                    <span class="text-[10px] text-white/40 font-mono border border-white/10 px-2 py-1 rounded bg-black/40 uppercase tracking-widest shrink-0">{{ c.type }}</span>
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button type="button" onclick="event.stopPropagation(); openRenameChannelModal('{{ c.id }}', '{{ c.name }}')" class="bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all">Rename</button>
+                            <button type="button" onclick="event.stopPropagation(); openDeleteChannelModal('{{ c.id }}', '{{ c.name }}')" class="bg-red-500/10 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all">Delete</button>
+                        </div>
+                        <span class="text-[10px] text-white/40 font-mono border border-white/10 px-2 py-1 rounded bg-black/40 uppercase tracking-widest shrink-0">{{ c.type }}</span>
+                    </div>
                 </div>
                 {% endif %}
                 {% endfor %}
+                </div>
             </div>
 
         </div>
@@ -515,8 +622,30 @@
                     </select>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-black/20 p-6 rounded-2xl border border-white/5">
-                    {% for perm in[('view_channel', 'View Channel'), ('send_messages', 'Send Messages'), ('embed_links', 'Embed Links'), ('attach_files', 'Attach Files')] %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-black/20 p-6 rounded-2xl border border-white/5 max-h-[50vh] overflow-y-auto">
+                    {% for perm in [
+                        ('view_channel', 'View Channel'), 
+                        ('send_messages', 'Send Messages'), 
+                        ('embed_links', 'Embed Links'), 
+                        ('attach_files', 'Attach Files'),
+                        ('manage_messages', 'Manage Messages'),
+                        ('read_message_history', 'Read Message History'),
+                        ('mention_everyone', 'Mention @everyone'),
+                        ('use_external_emojis', 'Use External Emojis'),
+                        ('add_reactions', 'Add Reactions'),
+                        ('connect', 'Connect (Voice)'),
+                        ('speak', 'Speak (Voice)'),
+                        ('mute_members', 'Mute Members'),
+                        ('deafen_members', 'Deafen Members'),
+                        ('move_members', 'Move Members'),
+                        ('use_voice_activation', 'Use Voice Activity'),
+                        ('request_to_speak', 'Request to Speak (Stage)'),
+                        ('manage_events', 'Manage Events'),
+                        ('send_messages_in_threads', 'Send Messages in Threads'),
+                        ('create_public_threads', 'Create Public Threads'),
+                        ('create_private_threads', 'Create Private Threads'),
+                        ('manage_threads', 'Manage Threads')
+                    ] %}
                     <div class="flex justify-between items-center border-b border-white/5 pb-3">
                         <span class="text-white/80 text-sm font-bold tracking-wide">{{ perm[1] }}</span>
                         <select name="{{ perm[0] }}" class="bg-black/60 text-xs font-bold text-white rounded p-2 border border-white/10 focus:border-cyan-500 outline-none">
@@ -531,6 +660,68 @@
                 <div class="flex justify-end gap-3 mt-8">
                     <button type="button" onclick="closeChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Abort</button>
                     <button type="submit" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] text-sm uppercase tracking-widest">Compile Override</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- CREATE CHANNEL MODAL -->
+    <div id="create-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
+            <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"></div>
+            <h3 class="text-2xl font-black text-white mb-8 tracking-tight">Create Channel</h3>
+            
+            <form method="post" action="/server/{{ guild_id }}/channel/create" class="space-y-6 relative z-10">
+                <div>
+                    <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Channel Name</label>
+                    <input type="text" name="channel_name" required class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold" placeholder="new-channel">
+                </div>
+                <div>
+                    <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Channel Type</label>
+                    <select name="channel_type" class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
+                        <option value="text">Text Channel</option>
+                        <option value="voice">Voice Channel</option>
+                        <option value="category">Category</option>
+                    </select>
+                </div>
+                <div class="flex justify-end gap-3 mt-8">
+                    <button type="button" onclick="closeCreateChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Cancel</button>
+                    <button type="submit" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] text-sm uppercase tracking-widest">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- RENAME CHANNEL MODAL -->
+    <div id="rename-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
+            <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"></div>
+            <h3 class="text-2xl font-black text-white mb-8 tracking-tight">Rename Channel</h3>
+            
+            <form id="rename-channel-form" method="post" class="space-y-6 relative z-10">
+                <div>
+                    <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">New Name</label>
+                    <input type="text" id="rename-channel-name" name="new_name" required class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
+                </div>
+                <div class="flex justify-end gap-3 mt-8">
+                    <button type="button" onclick="closeRenameChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Cancel</button>
+                    <button type="submit" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] text-sm uppercase tracking-widest">Rename</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- DELETE CHANNEL MODAL -->
+    <div id="delete-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="modal-content liquid-glass border border-red-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(255,0,60,0.1)] relative overflow-hidden">
+            <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#ff003c] to-transparent"></div>
+            <h3 class="text-2xl font-black text-white mb-4 tracking-tight">Delete Channel</h3>
+            <p class="text-white/70 mb-8">Are you sure you want to delete <strong id="delete-channel-name" class="text-white"></strong>? This action cannot be undone.</p>
+            
+            <form id="delete-channel-form" method="post" class="space-y-6 relative z-10">
+                <div class="flex justify-end gap-3 mt-8">
+                    <button type="button" onclick="closeDeleteChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Cancel</button>
+                    <button type="submit" class="bg-[#ff003c] hover:bg-[#ff003c]/80 text-white font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(255,0,60,0.4)] text-sm uppercase tracking-widest">Delete</button>
                 </div>
             </form>
         </div>
