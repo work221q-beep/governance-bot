@@ -71,7 +71,7 @@
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl mx-auto">
             {% for guild in user.guilds %}
-            <a href="/server/{{ guild.id }}/permissions" class="cyber-card liquid-glass rounded-2xl p-6 group block relative overflow-hidden">
+            <a href="/server/{{ guild.id }}/permissions" class="cyber-card liquid-glass rounded-2xl p-6 group block relative overflow-hidden {% if guild.is_premium %}border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]{% endif %}">
                 <div class="absolute inset-0 bg-gradient-to-br from-[#ff003c]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="flex items-center space-x-5 relative z-10">
                     <div class="h-16 w-16 bg-black/50 border border-white/10 rounded-full flex items-center justify-center text-2xl font-black overflow-hidden group-hover:border-[#ff003c]/50 transition-colors shadow-inner">
