@@ -99,10 +99,13 @@
             });
         });
 
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied to clipboard: ' + text);
-            });
+        function triggerShake() {
+            const deployBar = document.getElementById('deploy-bar');
+            if (deployBar) {
+                deployBar.classList.remove('animate-shake');
+                void deployBar.offsetWidth; // trigger reflow
+                deployBar.classList.add('animate-shake');
+            }
         }
 
         function discardChanges() {
@@ -167,6 +170,24 @@
         }
 
         function closeModModal() { document.getElementById('mod-modal').classList.add('hidden'); }
+
+        function copyToClipboard(text, element, event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = element.innerText;
+                element.innerText = "Copied!";
+                element.classList.add('text-emerald-400');
+                setTimeout(() => {
+                    element.innerText = originalText;
+                    element.classList.remove('text-emerald-400');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
     </script>
 </head>
 <body class="flex h-screen overflow-hidden relative">
@@ -194,7 +215,7 @@
         <div class="p-6 border-b border-white/5">
             <h1 class="text-3xl font-black tracking-widest text-white">SYLAS <span class="text-[#ff003c]">AI</span></h1>
             <div class="flex items-center gap-2 mt-2">
-                <p class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-block px-3 py-1 rounded bg-white/5 shadow-inner">{{ guild_name }}</p>
+                <p class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-block px-3 py-1 rounded bg-white/5 shadow-inner cursor-pointer hover:bg-white/10 transition-colors" onclick="copyToClipboard('{{ guild_id }}', this, event)" title="Copy Guild ID">{{ guild_name }}</p>
                 {% if has_premium %}
                 <span class="text-[10px] bg-gradient-to-r from-[#ff003c] to-[#7000ff] text-white px-2 py-0.5 rounded font-bold uppercase tracking-widest shadow-[0_0_10px_rgba(255,0,60,0.3)] flex items-center gap-1">
                     💎 Premium
@@ -233,7 +254,7 @@
                         <h4 class="text-white font-black uppercase tracking-widest text-sm">Sylas Premium</h4>
                     </div>
                     <p class="text-white/60 text-xs mb-4 leading-relaxed">Unlock advanced raid protection, custom AI models, and unlimited matrix syncs.</p>
-                    <a href="/server/{{ guild_id }}/premium" class="block w-full text-center bg-white text-black font-black uppercase tracking-widest text-xs py-2.5 rounded-lg hover:bg-gray-200 transition-colors">Upgrade Now</a>
+                    <a href="/server/{{ guild_id }}/premium" class="block w-full text-center bg-white text-black font-black uppercase tracking-widest text-xs py-2.5 rounded-lg hover:bg-gray-200 transition-colors">Manage Subscription</a>
                 </div>
             </div>
             {% endif %}
@@ -297,7 +318,7 @@
                             <div class="flex items-center gap-4">
                                 {% if not role.is_everyone %}<span class="w-4 h-4 rounded-full shadow-inner border border-white/20" style="background-color: {{ role.color }};"></span>{% endif %}
                                 <h3 class="text-xl font-bold text-white flex items-center">
-                                    <span class="cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ role.id }}')" title="Copy Role ID">{{ role.name }}</span>
+                                    {{ role.name }}
                                     {% if role.is_everyone %}<span class="text-[10px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-3 shadow-[0_0_10px_rgba(255,0,60,0.2)]">Base Layer</span>{% endif %}
                                     {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-3">Integration</span>{% endif %}
                                 </h3>
@@ -399,8 +420,8 @@
                             <div class="w-12 h-12 bg-white/5 border border-white/10 rounded-full flex items-center justify-center font-bold text-lg shadow-lg">{{ m.name[0] }}</div>
                         {% endif %}
                         <div>
-                            <span class="font-bold text-white text-lg block cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ m.display_name }}')" title="Copy Name">{{ m.display_name }}</span>
-                            <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 mt-1 inline-block cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ m.id }}')" title="Copy User ID">{{ m.name }} | Role: {{ m.top_role }}</span>
+                            <span class="font-bold text-white text-lg block">{{ m.display_name }}</span>
+                            <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 mt-1 inline-block">{{ m.name }} | Role: {{ m.top_role }}</span>
                         </div>
                     </div>
                     <div class="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
@@ -423,8 +444,8 @@
                             <div class="w-12 h-12 bg-cyan-900/30 border border-cyan-500/30 rounded-full flex items-center justify-center font-bold text-cyan-400">{{ m.name[0] }}</div>
                         {% endif %}
                         <div>
-                            <span class="font-bold text-cyan-400 text-lg block drop-shadow-[0_0_5px_rgba(6,182,212,0.5)] cursor-pointer hover:text-white" onclick="copyToClipboard('{{ m.name }}')" title="Copy Bot Name">{{ m.name }}</span>
-                            <span class="text-xs text-white/40 font-mono mt-1 block cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ m.id }}')" title="Copy Bot ID">Role: {{ m.top_role }}</span>
+                            <span class="font-bold text-cyan-400 text-lg block drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]">{{ m.name }}</span>
+                            <span class="text-xs text-white/40 font-mono mt-1 block">Role: {{ m.top_role }}</span>
                         </div>
                     </div>
                     <button onclick="openModModal('kick', '{{ m.id }}', '{{ m.name }}')" class="bg-red-500/10 border border-red-500/30 hover:bg-red-500/30 text-red-400 px-5 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all opacity-0 group-hover:opacity-100">Eject</button>
@@ -447,7 +468,7 @@
                         {% elif c.type == 'category' %}
                         <svg class="w-6 h-6 text-white/20 group-hover:text-white/50 transition-colors shrink-0" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                         {% endif %}
-                        <span class="font-bold text-white text-lg truncate cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ c.id }}')" title="Copy Channel ID">{{ c.name }}</span>
+                        <span class="font-bold text-white text-lg truncate">{{ c.name }}</span>
                     </div>
                     <span class="text-[10px] text-white/40 font-mono border border-white/10 px-2 py-1 rounded bg-black/40 uppercase tracking-widest shrink-0">{{ c.type }}</span>
                 </div>
@@ -513,7 +534,7 @@
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-black/20 p-6 rounded-2xl border border-white/5">
-                    {% for perm in[('view_channel', 'View Channel'), ('send_messages', 'Send Messages'), ('embed_links', 'Embed Links'), ('attach_files', 'Attach Files'), ('manage_messages', 'Manage Messages'), ('manage_channels', 'Manage Channels'), ('manage_permissions', 'Manage Permissions'), ('connect', 'Connect'), ('speak', 'Speak'), ('mute_members', 'Mute Members'), ('deafen_members', 'Deafen Members'), ('move_members', 'Move Members'), ('manage_events', 'Manage Events')] %}
+                    {% for perm in[('view_channel', 'View Channel'), ('send_messages', 'Send Messages'), ('embed_links', 'Embed Links'), ('attach_files', 'Attach Files')] %}
                     <div class="flex justify-between items-center border-b border-white/5 pb-3">
                         <span class="text-white/80 text-sm font-bold tracking-wide">{{ perm[1] }}</span>
                         <select name="{{ perm[0] }}" class="bg-black/60 text-xs font-bold text-white rounded p-2 border border-white/10 focus:border-cyan-500 outline-none">

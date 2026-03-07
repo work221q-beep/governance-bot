@@ -19,6 +19,8 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
     <script>
+        let folderTimeouts = {};
+
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
@@ -26,14 +28,6 @@
             
             // Auto-refresh data every 2 seconds
             setInterval(() => {
-                // Track open folders
-                const openFolders = [];
-                document.querySelectorAll('[id^="folder-"]').forEach(el => {
-                    if (!el.classList.contains('hidden')) {
-                        openFolders.push(el.id);
-                    }
-                });
-
                 fetch(window.location.href)
                     .then(response => response.text())
                     .then(html => {
@@ -47,18 +41,53 @@
                             if (currentTab && newTab) {
                                 // Don't replace the whole tab if it contains the active element
                                 if (!currentTab.contains(document.activeElement)) {
+                                    // Preserve folder open states in DB tab
+                                    let openFolders = [];
+                                    let editorState = null;
+                                    if (tab === 'db') {
+                                        currentTab.querySelectorAll('[id^="folder-"]').forEach(folder => {
+                                            if (!folder.classList.contains('hidden')) {
+                                                openFolders.push(folder.id);
+                                            }
+                                        });
+                                        
+                                        const editorActive = document.getElementById('editor-active');
+                                        if (editorActive && !editorActive.classList.contains('hidden')) {
+                                            editorState = {
+                                                title: document.getElementById('editor-title').innerText,
+                                                docId: document.getElementById('editor-title').dataset.docId,
+                                                value: document.getElementById('editor-textarea').value,
+                                                deleteAction: document.getElementById('form-delete-doc').action,
+                                                saveAction: document.getElementById('form-save-doc').action
+                                            };
+                                        }
+                                    }
+                                    
                                     const classes = currentTab.className;
                                     currentTab.innerHTML = newTab.innerHTML;
                                     currentTab.className = classes;
+                                    
+                                    // Restore folder open states and editor state
+                                    if (tab === 'db') {
+                                        openFolders.forEach(id => {
+                                            const folder = document.getElementById(id);
+                                            if (folder) folder.classList.remove('hidden');
+                                        });
+                                        
+                                        if (editorState) {
+                                            document.getElementById('editor-empty').classList.add('hidden');
+                                            const activeEditor = document.getElementById('editor-active');
+                                            activeEditor.classList.remove('hidden');
+                                            activeEditor.classList.add('flex');
+                                            
+                                            document.getElementById('editor-title').innerText = editorState.title;
+                                            if (editorState.docId) document.getElementById('editor-title').dataset.docId = editorState.docId;
+                                            document.getElementById('editor-textarea').value = editorState.value;
+                                            document.getElementById('form-delete-doc').action = editorState.deleteAction;
+                                            document.getElementById('form-save-doc').action = editorState.saveAction;
+                                        }
+                                    }
                                 }
-                            }
-                        });
-
-                        // Restore open folders
-                        openFolders.forEach(id => {
-                            const el = document.getElementById(id);
-                            if (el) {
-                                el.classList.remove('hidden');
                             }
                         });
                     })
@@ -66,28 +95,35 @@
             }, 2000);
         }
 
-        function toggleFolder(folderId) {
-            const folder = document.getElementById(folderId);
+        function toggleFolder(collName) {
+            const folder = document.getElementById('folder-' + collName);
             folder.classList.toggle('hidden');
-            folder.dataset.lastActive = Date.now();
             
-            // Clear existing timer if any
-            if (folder.dataset.timerId) {
-                clearTimeout(folder.dataset.timerId);
+            if (!folder.classList.contains('hidden')) {
+                resetFolderTimeout(collName);
+            } else {
+                clearTimeout(folderTimeouts[collName]);
             }
-            
-            // Set timer
-            const timerId = setTimeout(() => {
-                folder.classList.add('hidden');
-            }, 30000);
-            folder.dataset.timerId = timerId;
         }
 
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied to clipboard: ' + text);
-            });
+        function resetFolderTimeout(collName) {
+            clearTimeout(folderTimeouts[collName]);
+            folderTimeouts[collName] = setTimeout(() => {
+                const folder = document.getElementById('folder-' + collName);
+                if (folder && !folder.classList.contains('hidden')) {
+                    folder.classList.add('hidden');
+                }
+            }, 30000); // 30 seconds inactivity
         }
+
+        // Reset timeout on interaction within the folder
+        document.addEventListener('mousemove', (e) => {
+            const folder = e.target.closest('[id^="folder-"]');
+            if (folder && !folder.classList.contains('hidden')) {
+                const collName = folder.id.replace('folder-', '');
+                resetFolderTimeout(collName);
+            }
+        });
 
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => {
@@ -108,6 +144,125 @@
             btn.classList.remove('bg-white/5', 'text-white/50', 'border-white/5');
             window.history.replaceState(null, null, "?tab=" + tabName);
         }
+
+        function copyToClipboard(text, element) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = element.innerText;
+                element.innerText = 'Copied!';
+                element.classList.add('text-emerald-400');
+                setTimeout(() => {
+                    element.innerText = originalText;
+                    element.classList.remove('text-emerald-400');
+                }, 1500);
+            });
+        }
+
+        function filterArmory() {
+            const query = document.getElementById('search-armory').value.toLowerCase();
+            const groups = document.querySelectorAll('.armory-group');
+            
+            groups.forEach(group => {
+                const items = group.querySelectorAll('.armory-item');
+                let visibleCount = 0;
+                
+                items.forEach(item => {
+                    const text = item.innerText.toLowerCase();
+                    if (text.includes(query)) {
+                        item.classList.remove('hidden');
+                        item.classList.add('flex');
+                        visibleCount++;
+                    } else {
+                        item.classList.add('hidden');
+                        item.classList.remove('flex');
+                    }
+                });
+                
+                const countBadge = group.querySelector('.armory-group-count');
+                if (countBadge) {
+                    countBadge.innerText = visibleCount + ' Stored';
+                }
+                
+                if (visibleCount === 0) {
+                    group.classList.add('hidden');
+                } else {
+                    group.classList.remove('hidden');
+                }
+            });
+        }
+
+        function filterDB() {
+            const query = document.getElementById('search-db').value.toLowerCase();
+            const groups = document.querySelectorAll('.db-group');
+            
+            groups.forEach(group => {
+                const items = group.querySelectorAll('.db-item');
+                let visibleCount = 0;
+                
+                items.forEach(item => {
+                    const text = item.innerText.toLowerCase();
+                    if (text.includes(query)) {
+                        item.classList.remove('hidden');
+                        item.classList.add('flex');
+                        visibleCount++;
+                    } else {
+                        item.classList.add('hidden');
+                        item.classList.remove('flex');
+                    }
+                });
+                
+                const countBadge = group.querySelector('.db-group-count');
+                if (countBadge) {
+                    countBadge.innerText = visibleCount + ' docs';
+                }
+                
+                if (visibleCount === 0) {
+                    group.classList.add('hidden');
+                } else {
+                    group.classList.remove('hidden');
+                    // Auto-expand folder if searching
+                    const folder = group.querySelector('[id^="folder-"]');
+                    if (query.length > 0 && folder) {
+                        folder.classList.remove('hidden');
+                    }
+                }
+            });
+        }
+
+        function filterServers() {
+            const query = document.getElementById('search-servers').value.toLowerCase();
+            const items = document.querySelectorAll('.server-item');
+            
+            items.forEach(item => {
+                const text = item.innerText.toLowerCase();
+                if (text.includes(query)) {
+                    item.classList.remove('hidden');
+                    item.classList.add('flex');
+                } else {
+                    item.classList.add('hidden');
+                    item.classList.remove('flex');
+                }
+            });
+        }
+
+        function filterBilling() {
+            const query = document.getElementById('search-billing').value.toLowerCase();
+            const columns = document.querySelectorAll('.billing-column');
+            
+            columns.forEach(column => {
+                const items = column.querySelectorAll('.billing-item');
+                
+                items.forEach(item => {
+                    const text = item.innerText.toLowerCase();
+                    if (text.includes(query)) {
+                        item.classList.remove('hidden');
+                        item.classList.add('flex');
+                    } else {
+                        item.classList.add('hidden');
+                        item.classList.remove('flex');
+                    }
+                });
+            });
+        }
     </script>
 </head>
 <body class="p-10 max-w-7xl mx-auto relative min-h-screen">
@@ -123,7 +278,12 @@
                 <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> RESTRICTED UPLINK
             </p>
         </div>
-        <div class="mt-4 md:mt-0">
+        <div class="mt-4 md:mt-0 flex items-center gap-4">
+            {% if msg %}
+            <div class="bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 px-4 py-2 rounded-xl text-sm font-bold animate-pulse">
+                {{ msg }}
+            </div>
+            {% endif %}
             <a href="/dashboard" class="px-6 py-3 liquid-glass hover:bg-white/10 rounded-xl text-sm font-bold transition-all flex items-center gap-2 group">
                 <span class="group-hover:-translate-x-1 transition-transform">←</span> Exit to System
             </a>
@@ -174,7 +334,8 @@
                 <p class="text-white/40 text-sm mt-2 font-mono">Capacity: {{ payloads|length }} / 360 Active (720 Total w/ Backup)</p>
             </div>
             
-            <div class="flex flex-wrap gap-3">
+            <div class="flex flex-wrap gap-3 items-center">
+                <input type="text" id="search-armory" placeholder="Search payloads..." class="bg-black/40 text-white font-mono text-sm px-4 py-2.5 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 w-64" onkeyup="filterArmory()">
                 <button onclick="window.location.href='/admin?tab=armory'" class="liquid-glass hover:bg-white/10 text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">🔄 Sync</button>
                 <form method="post" action="/admin/force_harvest">
                     <button type="submit" onclick="this.innerHTML='Compiling...'; this.classList.add('opacity-50');" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/40 px-5 py-2.5 rounded-xl font-bold transition-all text-sm shadow-[0_0_15px_rgba(147,51,234,0.2)]">⚡ Force Generation</button>
@@ -186,28 +347,28 @@
         </div>
         
         {% if payloads %}
-            <div class="space-y-8 max-h-[600px] overflow-y-auto pr-4">
+            <div class="space-y-8 max-h-[600px] overflow-y-auto pr-4" id="armory-list">
             {% for raid_type, type_payloads in payloads|groupby('raid_type') %}
-                <div class="fade-in">
+                <div class="fade-in armory-group">
                     <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 flex justify-between">
                         <span class="text-red-400">{{ raid_type|replace('_', ' ') }} PROTOCOLS</span>
-                        <span class="bg-white/5 px-2 py-1 rounded">{{ type_payloads|length }} Stored</span>
+                        <span class="bg-white/5 px-2 py-1 rounded armory-group-count">{{ type_payloads|length }} Stored</span>
                     </h4>
                     <div class="grid gap-3">
                     {% for p in type_payloads %}
-                        <div class="bg-black/40 border border-white/5 hover:border-white/20 p-5 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-300">
-                            <div class="flex-1">
-                                <div class="flex items-center gap-3 mb-2">
+                        <div class="armory-item bg-black/40 border border-white/5 hover:border-white/20 p-5 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-300">
+                            <div class="flex-1 overflow-hidden">
+                                <div class="flex items-center gap-3 mb-2 flex-wrap">
                                     <span class="text-[10px] {% if p.raid_type == 'innocent' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
-                                    <span class="text-white font-bold">{{ p.username }}</span>
+                                    <span class="text-white font-bold cursor-pointer hover:text-cyan-400 transition-colors" onclick="copyToClipboard('{{ p.username }}', this)" title="Copy Username">{{ p.username }}</span>
                                     {% if p.payload_id %}
-                                    <span onclick="copyToClipboard('{{ p.payload_id }}')" class="cursor-pointer text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5">{{ p.payload_id }}</span>
+                                    <span class="text-[10px] text-cyan-400/70 font-mono border border-cyan-500/20 px-2 py-0.5 rounded bg-cyan-500/5 cursor-pointer hover:bg-cyan-500/20 transition-colors" onclick="copyToClipboard('{{ p.payload_id }}', this)" title="Copy Payload ID">{{ p.payload_id }}</span>
                                     {% endif %}
                                     {% if p.batch_id %}
-                                    <span class="text-[10px] text-white/30 font-mono border border-white/10 px-2 py-0.5 rounded bg-white/5">{{ p.batch_id }}</span>
+                                    <span class="text-[10px] text-white/30 font-mono border border-white/10 px-2 py-0.5 rounded bg-white/5 cursor-pointer hover:bg-white/20 transition-colors" onclick="copyToClipboard('{{ p.batch_id }}', this)" title="Copy Batch ID">{{ p.batch_id }}</span>
                                     {% endif %}
                                 </div>
-                                <p class="text-white/50 font-mono text-sm leading-relaxed">"{{ p.spam_message }}"</p>
+                                <p class="text-white/50 font-mono text-sm leading-relaxed break-words">"{{ p.spam_message }}"</p>
                             </div>
                             <form method="post" action="/admin/delete_payload/{{ p._id }}">
                                 <button class="text-red-400/50 hover:text-red-400 hover:bg-red-500/10 px-4 py-2 rounded-lg text-sm font-bold transition-all">Delete</button>
@@ -230,18 +391,24 @@
     <div id="db" class="tab-content hidden relative z-10">
         <div class="flex flex-col md:flex-row h-[700px] liquid-glass rounded-2xl overflow-hidden shadow-2xl border border-white/10">
             
-            <div class="w-full md:w-1/3 border-r border-white/5 overflow-y-auto p-6 bg-black/20">
-                <h3 class="text-white/40 font-bold text-xs uppercase tracking-widest mb-6 flex justify-between items-center">
-                    Cluster: Sylas_Core
-                    <span class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[10px] animate-pulse">UPLINKED</span>
-                </h3>
+            <div class="w-full md:w-1/3 border-r border-white/5 flex flex-col bg-black/20">
+                <div class="p-6 pb-4 border-b border-white/5">
+                    <h3 class="text-white/40 font-bold text-xs uppercase tracking-widest mb-4 flex justify-between items-center">
+                        Cluster: Sylas_Core
+                        <div class="flex items-center gap-2">
+                            <button onclick="window.location.href='/admin?tab=db'" class="text-[10px] bg-white/5 hover:bg-white/10 text-white px-2 py-1 rounded transition-colors">🔄 Sync</button>
+                            <span class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[10px] animate-pulse">UPLINKED</span>
+                        </div>
+                    </h3>
+                    <input type="text" id="search-db" placeholder="Search documents..." class="w-full bg-black/40 text-white font-mono text-sm px-4 py-2 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50" onkeyup="filterDB()">
+                </div>
                 
-                <div class="space-y-4">
+                <div class="flex-1 overflow-y-auto p-6 space-y-4" id="db-list">
                     {% for coll_name, docs in db_structure.items() %}
-                    <div class="bg-white/5 rounded-xl border border-white/5 overflow-hidden">
-                        <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-white/5 transition-colors group" onclick="toggleFolder('folder-{{ coll_name }}')">
+                    <div class="db-group bg-white/5 rounded-xl border border-white/5 overflow-hidden">
+                        <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-white/5 transition-colors group" onclick="toggleFolder('{{ coll_name }}')">
                             <span class="text-white/80 font-semibold text-sm flex items-center gap-2 group-hover:text-white transition-colors">📁 {{ coll_name }}</span>
-                            <span class="text-xs text-white/30 font-mono">{{ docs|length }} docs</span>
+                            <span class="text-xs text-white/30 font-mono db-group-count">{{ docs|length }} docs</span>
                         </div>
                         
                         <div id="folder-{{ coll_name }}" class="hidden bg-black/40 p-2 space-y-1 border-t border-white/5">
@@ -250,8 +417,11 @@
                             </form>
                             
                             {% for doc in docs %}
-                            <div class="text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg cursor-pointer transition-all truncate" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
-                                📄 {{ doc._id }}
+                            <div class="db-item flex items-center justify-between text-white/50 font-mono text-xs py-2 px-3 hover:bg-white/10 hover:text-white rounded-lg transition-all group/doc">
+                                <div class="cursor-pointer truncate flex-1" onclick='openDocument("{{ coll_name }}", "{{ doc._id }}", {{ doc|tojson|safe }})'>
+                                    📄 {{ doc._id }}
+                                </div>
+                                <span class="opacity-0 group-hover/doc:opacity-100 cursor-pointer hover:text-cyan-400 px-2" onclick="copyToClipboard('{{ doc._id }}', this)" title="Copy Doc ID">📋</span>
                             </div>
                             {% endfor %}
                             {% if not docs %}<div class="text-white/20 text-xs italic px-3 py-2">Void sector</div>{% endif %}
@@ -269,7 +439,7 @@
                 
                 <div id="editor-active" class="hidden flex-col h-full fade-in">
                     <div class="bg-white/5 border-b border-white/10 p-4 flex justify-between items-center backdrop-blur-md">
-                        <span id="editor-title" class="text-cyan-400 font-mono text-sm font-bold tracking-wide">file.json</span>
+                        <span id="editor-title" class="text-cyan-400 font-mono text-sm font-bold tracking-wide cursor-pointer hover:text-white transition-colors" onclick="if(this.dataset.docId) copyToClipboard(this.dataset.docId, this)" title="Copy Doc ID">file.json</span>
                         <div class="flex gap-3">
                             <form id="form-delete-doc" method="post" action="" onsubmit="return confirm('Permanently shred this document?');">
                                 <button type="submit" class="bg-red-900/20 border border-red-900/50 text-red-400 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg text-xs font-bold transition-all">Shred</button>
@@ -290,13 +460,19 @@
 
     <!-- SERVERS TAB -->
     <div id="servers" class="tab-content hidden liquid-glass p-8 rounded-2xl relative z-10">
-        <h3 class="text-3xl font-bold text-white tracking-tight mb-8">Active Servers</h3>
-        <div class="grid gap-4">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <h3 class="text-3xl font-bold text-white tracking-tight">Active Servers</h3>
+            <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
+                <input type="text" id="search-servers" placeholder="Search servers by name or ID..." class="bg-black/40 text-white font-mono text-sm px-4 py-2.5 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 w-full md:w-80" onkeyup="filterServers()">
+                <button onclick="window.location.href='/admin?tab=servers'" class="liquid-glass hover:bg-white/10 text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">🔄 Sync</button>
+            </div>
+        </div>
+        <div class="grid gap-4" id="servers-list">
             {% for s in servers %}
-            <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div class="server-item bg-black/40 border border-white/5 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h4 class="text-lg font-bold text-white">{{ s.name }}</h4>
-                    <p class="text-white/50 text-sm font-mono">ID: {{ s.id }} | Members: {{ s.member_count }}</p>
+                    <p class="text-white/50 text-sm font-mono">ID: <span class="cursor-pointer hover:text-cyan-400 transition-colors" onclick="copyToClipboard('{{ s.id }}', this)" title="Copy Server ID">{{ s.id }}</span> | Members: {{ s.member_count }}</p>
                     <div class="mt-2 flex flex-wrap gap-2">
                         {% for mod in s.cooldowns %}
                         <form method="post" action="/admin/server/{{ s.id }}/reset_cooldown/{{ mod }}" class="inline">
@@ -330,16 +506,14 @@
 
     <!-- BILLING TAB -->
     <div id="billing" class="tab-content hidden liquid-glass p-8 rounded-2xl relative z-10">
-        {% if request.query_params.get('success') %}
-        <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-xl mb-6 text-sm font-bold">
-            {{ request.query_params.get('message') }}
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <h3 class="text-3xl font-bold text-white tracking-tight">Billing & License Keys</h3>
+            <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
+                <input type="text" id="search-billing" placeholder="Search keys, guilds, or amounts..." class="bg-black/40 text-white font-mono text-sm px-4 py-2.5 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 w-full md:w-80" onkeyup="filterBilling()">
+                <button onclick="window.location.href='/admin?tab=billing'" class="liquid-glass hover:bg-white/10 text-white px-5 py-2.5 rounded-xl font-bold transition-all text-sm">🔄 Sync</button>
+            </div>
         </div>
-        {% endif %}
-        {% if request.query_params.get('error') %}
-        <div class="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-6 text-sm font-bold">
-            {{ request.query_params.get('error') }}
-        </div>
-        {% endif %}
+        
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-black/40 border border-white/5 p-6 rounded-xl">
                 <h4 class="text-white/50 text-xs font-bold uppercase tracking-widest mb-2">Total Revenue</h4>
@@ -374,32 +548,36 @@
             </div>
         </div>
         
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8" id="billing-list">
+            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 billing-column">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Active License Keys</h4>
-                {% for k in active_keys %}
-                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
+                {% for k in license_keys %}
+                <div class="billing-item bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
                     <div>
-                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
+                        <p class="text-cyan-400 font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-white transition-colors" onclick="copyToClipboard('{{ k.key }}', this)" title="Copy Key">{{ k.key }}</p>
                         <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Expires: {{ k.expires_at }}</p>
                     </div>
-                    <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Valid</span>
+                    <div>
+                        <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Valid</span>
+                    </div>
                 </div>
                 {% endfor %}
-                {% if not active_keys %}
+                {% if not license_keys %}
                 <p class="text-white/40 italic text-sm">No active license keys.</p>
                 {% endif %}
             </div>
 
-            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 billing-column">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Used License Keys</h4>
                 {% for k in used_keys %}
-                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center opacity-60">
+                <div class="billing-item bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center opacity-50 hover:opacity-100 transition-opacity">
                     <div>
-                        <p class="text-white font-mono text-sm font-bold tracking-wider">{{ k.key }}</p>
-                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Used at: {{ k.expires_at }}</p>
+                        <p class="text-white/50 font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-white transition-colors" onclick="copyToClipboard('{{ k.key }}', this)" title="Copy Key">{{ k.key }}</p>
+                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Used By: <span class="cursor-pointer hover:text-cyan-400" onclick="copyToClipboard('{{ k.used_by }}', this)">{{ k.used_by }}</span></p>
                     </div>
-                    <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
+                    <div>
+                        <span class="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Used</span>
+                    </div>
                 </div>
                 {% endfor %}
                 {% if not used_keys %}
@@ -407,12 +585,12 @@
                 {% endif %}
             </div>
 
-            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 billing-column">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Recent Payments</h4>
                 {% for p in payments %}
-                <div class="bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
+                <div class="billing-item bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
                     <div>
-                        <p class="text-white font-mono text-sm font-bold tracking-wider">Guild: {{ p.guild_id }}</p>
+                        <p class="text-white font-mono text-sm font-bold tracking-wider">Guild: <span class="cursor-pointer hover:text-cyan-400 transition-colors" onclick="copyToClipboard('{{ p.guild_id }}', this)" title="Copy Guild ID">{{ p.guild_id }}</span></p>
                         <p class="text-white/40 text-[10px] mt-1">Amount: ${{ p.amount }} | Date: {{ p.created_at }}</p>
                     </div>
                     <div>
@@ -428,6 +606,24 @@
                 <p class="text-white/40 italic text-sm">No payments recorded.</p>
                 {% endif %}
             </div>
+
+            <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 billing-column">
+                <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2 sticky top-0 bg-[#030305]/90 backdrop-blur-md z-10">Gifted Premium</h4>
+                {% for g in premium_gifts %}
+                <div class="billing-item bg-black/40 border border-white/5 p-4 rounded-xl flex justify-between items-center">
+                    <div>
+                        <p class="text-white font-mono text-sm font-bold tracking-wider">Guild: <span class="cursor-pointer hover:text-cyan-400 transition-colors" onclick="copyToClipboard('{{ g.guild_id }}', this)" title="Copy Guild ID">{{ g.guild_id }}</span></p>
+                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ g.days }} Days | Date: {{ g.gifted_at.strftime('%Y-%m-%d') if g.gifted_at else 'N/A' }}</p>
+                    </div>
+                    <div>
+                        <span class="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase">Gift</span>
+                    </div>
+                </div>
+                {% endfor %}
+                {% if not premium_gifts %}
+                <p class="text-white/40 italic text-sm">No premium gifts recorded.</p>
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -438,6 +634,7 @@
             document.getElementById('editor-active').classList.add('flex');
             
             document.getElementById('editor-title').innerText = collection + ' // ' + docId + '.json';
+            document.getElementById('editor-title').dataset.docId = docId;
             document.getElementById('editor-textarea').value = JSON.stringify(rawJson, null, 4);
             
             document.getElementById('form-delete-doc').action = '/admin/db/delete_doc/' + collection + '/' + docId;
