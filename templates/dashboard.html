@@ -11,6 +11,10 @@
         @keyframes drift { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(20px, 30px) scale(1.1); } }
         .cyber-card { transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .cyber-card:hover { transform: translateY(-5px); border-color: rgba(255,0,60,0.4); box-shadow: 0 15px 30px -10px rgba(255,0,60,0.2); background: rgba(255,255,255,0.05); }
+        
+        /* Premium Card Hover State Override */
+        .premium-card:hover { border-color: rgba(16,185,129,0.8) !important; box-shadow: 0 15px 30px -10px rgba(16,185,129,0.4) !important; }
+
         .cyber-btn { position: relative; overflow: hidden; background: transparent; border: 1px solid #ff003c; box-shadow: 0 0 15px rgba(255,0,60,0.3); transition: all 0.3s; }
         .cyber-btn::before { content: ''; position: absolute; inset: 0; background: #ff003c; transform: scaleX(0); transform-origin: right; transition: transform 0.4s ease; z-index: -1; }
         .cyber-btn:hover::before { transform: scaleX(1); transform-origin: left; }
@@ -71,10 +75,10 @@
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl mx-auto">
             {% for guild in user.guilds %}
-            <a href="/server/{{ guild.id }}/permissions" class="cyber-card liquid-glass rounded-2xl p-6 group block relative overflow-hidden">
-                <div class="absolute inset-0 bg-gradient-to-br from-[#ff003c]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            <a href="/server/{{ guild.id }}/permissions" class="cyber-card liquid-glass rounded-2xl p-6 group block relative overflow-hidden {% if guild.is_premium %}premium-card border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]{% endif %}">
+                <div class="absolute inset-0 bg-gradient-to-br {% if guild.is_premium %}from-emerald-500/5{% else %}from-[#ff003c]/5{% endif %} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="flex items-center space-x-5 relative z-10">
-                    <div class="h-16 w-16 bg-black/50 border border-white/10 rounded-full flex items-center justify-center text-2xl font-black overflow-hidden group-hover:border-[#ff003c]/50 transition-colors shadow-inner">
+                    <div class="h-16 w-16 bg-black/50 border border-white/10 rounded-full flex items-center justify-center text-2xl font-black overflow-hidden {% if guild.is_premium %}group-hover:border-emerald-400{% else %}group-hover:border-[#ff003c]/50{% endif %} transition-colors shadow-inner">
                         {% if guild.icon %}
                             <img src="https://cdn.discordapp.com/icons/{{ guild.id }}/{{ guild.icon }}.png" class="w-full h-full object-cover">
                         {% else %}
@@ -82,10 +86,10 @@
                         {% endif %}
                     </div>
                     <div class="text-left flex-1">
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-bold text-white group-hover:text-[#ff003c] transition-colors truncate">{{ guild.name }}</h2>
+                        <div class="flex flex-col items-start gap-1">
+                            <h2 class="text-xl font-bold text-white {% if guild.is_premium %}group-hover:text-emerald-400{% else %}group-hover:text-[#ff003c]{% endif %} transition-colors truncate max-w-full">{{ guild.name }}</h2>
                             {% if guild.is_premium %}
-                            <span class="text-[9px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest shadow-[0_0_10px_rgba(255,0,60,0.2)]">Premium Server</span>
+                            <span class="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest shadow-[0_0_10px_rgba(16,185,129,0.2)]">Premium Server</span>
                             {% endif %}
                         </div>
                         <div class="flex items-center gap-2 mt-2">

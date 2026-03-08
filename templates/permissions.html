@@ -14,31 +14,23 @@
         ::-webkit-scrollbar-thumb:hover { background: rgba(255,0,60,0.5); }
         .fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        /* Modal Animation */
         .modal-enter { animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         @keyframes modalPop { from { opacity: 0; transform: scale(0.95) translateY(20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         
-        /* Cyber Toggle Styling */
         .cyber-checkbox { appearance: none; width: 22px; height: 22px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; background: rgba(0,0,0,0.5); position: relative; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .cyber-checkbox:hover { border-color: rgba(255,255,255,0.5); }
-        
-        /* Red Variant */
         .cyber-checkbox.c-red:checked { background: #dc2626; border-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.4); }
-        .cyber-checkbox.c-red:checked::after { content: ''; position: absolute; left: 6px; top: 2px; width: 6px; height: 12px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-        
-        /* Blue Variant */
+        .cyber-checkbox.c-red:checked::after, .cyber-checkbox.c-blue:checked::after, .cyber-checkbox.c-emerald:checked::after { content: ''; position: absolute; left: 6px; top: 2px; width: 6px; height: 12px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
         .cyber-checkbox.c-blue:checked { background: #2563eb; border-color: #3b82f6; box-shadow: 0 0 15px rgba(59,130,246,0.4); }
-        .cyber-checkbox.c-blue:checked::after { content: ''; position: absolute; left: 6px; top: 2px; width: 6px; height: 12px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-        
-        /* Emerald Variant */
         .cyber-checkbox.c-emerald:checked { background: #059669; border-color: #10b981; box-shadow: 0 0 15px rgba(16,185,129,0.4); }
-        .cyber-checkbox.c-emerald:checked::after { content: ''; position: absolute; left: 6px; top: 2px; width: 6px; height: 12px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
         
-        /* Master Button */
-        .master-btn { background: linear-gradient(90deg, #991b1b, #dc2626); background-size: 200% auto; transition: 0.5s; color: white; box-shadow: 0 0 20px rgba(220,38,38,0.4); border: 1px solid #ef4444; }
-        .master-btn:hover { background-position: right center; box-shadow: 0 0 40px rgba(220,38,38,0.6); transform: scale(1.02); }
-        
-        /* Shake Animation */
+        /* NEW: Custom Matrix Select UI */
+        .cyber-select {
+            appearance: none;
+            background: #141519 url("data:image/svg+xml;utf8,<svg fill='white' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>") no-repeat right 8px center;
+            background-size: 16px;
+        }
+
         @keyframes shake {
             0%, 100% { transform: translateX(0) translateY(0); }
             10%, 30%, 50%, 70%, 90% { transform: translateX(-5px) translateY(-2px); }
@@ -52,15 +44,12 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             const urlParams = new URLSearchParams(window.location.search);
-            const tab = urlParams.get('tab');
-            if (tab && document.getElementById(tab)) { switchTab(tab); }
+            const tab = urlParams.get('tab') || 'roles';
+            if (document.getElementById(tab)) { switchTab(tab); }
 
-            // Store original form state
             const rolesForm = document.getElementById('roles-form');
             if (rolesForm) {
                 originalFormState = new FormData(rolesForm);
-                
-                // Add change listeners to all checkboxes
                 rolesForm.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
                     checkbox.addEventListener('change', () => {
                         hasUnsavedChanges = true;
@@ -69,33 +58,21 @@
                         deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
                     });
                 });
-
-                rolesForm.addEventListener('submit', () => {
-                    hasUnsavedChanges = false;
-                });
+                rolesForm.addEventListener('submit', () => { hasUnsavedChanges = false; });
             }
 
-            // Intercept clicks to trap user when there are unsaved changes
             document.addEventListener('click', (e) => {
                 if (hasUnsavedChanges) {
                     const isDeployBar = e.target.closest('#deploy-bar');
-                    const isRoleAccordion = e.target.closest('[id^="perms-"]') || e.target.closest('.cursor-pointer');
                     const isLinkOrTab = e.target.closest('a') || e.target.closest('.tab-btn');
-                    
                     if (isLinkOrTab && !isDeployBar) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        triggerShake();
+                        e.preventDefault(); e.stopPropagation(); triggerShake();
                     }
                 }
-            }, true); // Use capture phase to intercept early
+            }, true);
 
-            // Warn before leaving page
             window.addEventListener('beforeunload', (e) => {
-                if (hasUnsavedChanges) {
-                    e.preventDefault();
-                    e.returnValue = '';
-                }
+                if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; }
             });
         });
 
@@ -103,7 +80,7 @@
             const deployBar = document.getElementById('deploy-bar');
             if (deployBar) {
                 deployBar.classList.remove('animate-shake');
-                void deployBar.offsetWidth; // trigger reflow
+                void deployBar.offsetWidth; 
                 deployBar.classList.add('animate-shake');
             }
         }
@@ -111,12 +88,10 @@
         function discardChanges() {
             const rolesForm = document.getElementById('roles-form');
             if (rolesForm && originalFormState) {
-                // Reset all checkboxes to their original state
                 rolesForm.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
                     const originalValues = originalFormState.getAll(checkbox.name);
                     checkbox.checked = originalValues.includes(checkbox.value);
                 });
-                
                 hasUnsavedChanges = false;
                 const deployBar = document.getElementById('deploy-bar');
                 deployBar.classList.add('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
@@ -141,17 +116,40 @@
                 activeBtn.classList.remove('text-white/70', 'border-transparent');
                 activeBtn.classList.add('bg-[#ff003c]/20', 'text-[#ff003c]', 'border-[#ff003c]/30', 'shadow-[0_0_15px_rgba(255,0,60,0.2)]');
             }
+
+            // NEW: Dynamic Header Updates based on active tab
+            const titles = {
+                'roles': { t: 'Role permission manager', d: 'Real-time role management for <span class="text-white font-medium">{{ guild_name }}</span>.' },
+                'users': { t: 'User Directory', d: 'Manage and moderate server members for <span class="text-white font-medium">{{ guild_name }}</span>.' },
+                'bots': { t: 'Integration Control', d: 'Manage connected applications for <span class="text-white font-medium">{{ guild_name }}</span>.' },
+                'channels': { t: 'Channel Matrix', d: 'Configure structural topology for <span class="text-white font-medium">{{ guild_name }}</span>.' },
+                'billing': { t: 'Billing & Subscription', d: 'Manage financial ledgers and access logs for <span class="text-white font-medium">{{ guild_name }}</span>.' }
+            };
+            if(titles[tabName]) {
+                document.getElementById('page-title').innerHTML = titles[tabName].t;
+                document.getElementById('page-desc').innerHTML = titles[tabName].d;
+            }
+            
+            window.history.replaceState(null, null, "?tab=" + tabName);
         }
 
-        function openChannelModal(channelId, channelName) {
+        // NEW: Channel Modal Logic hiding irrelevant permissions based on channel type
+        function openChannelModal(channelId, channelName, channelType) {
             document.getElementById('modal-channel-id').value = channelId;
             document.getElementById('modal-channel-name').innerText = "Matrix Override: " + channelName;
+            
+            document.querySelectorAll('.perm-row').forEach(row => {
+                row.style.display = 'none'; // Hide all
+                if (row.classList.contains('type-all') || row.classList.contains('type-' + channelType)) {
+                    row.style.display = 'flex'; // Show only relevant permissions
+                }
+            });
+
             let modal = document.getElementById('channel-modal');
             modal.classList.remove('hidden');
             modal.querySelector('.modal-content').classList.add('modal-enter');
             document.getElementById('override-form').action = `/server/{{ guild_id }}/channel/${channelId}/override`;
         }
-
         function closeChannelModal() { document.getElementById('channel-modal').classList.add('hidden'); }
 
         function openCreateChannelModal() {
@@ -193,43 +191,25 @@
             modal.querySelector('.modal-content').classList.add('modal-enter');
             document.getElementById('mod-form').action = `/server/{{ guild_id }}/action/${action}/${targetId}`;
         }
-
         function closeModModal() { document.getElementById('mod-modal').classList.add('hidden'); }
 
-        // NEW UI System: Copying text elements natively
         function copyToClipboard(text, element) {
             const copy = () => {
                 const originalText = element.innerText;
                 element.innerText = 'Copied!';
                 element.classList.add('text-emerald-400', 'font-bold');
-                
                 setTimeout(() => {
                     element.innerText = originalText;
                     element.classList.remove('text-emerald-400', 'font-bold');
                 }, 1000);
             };
 
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(text).then(copy);
-            } else {
+            if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(copy); } 
+            else {
                 let textArea = document.createElement("textarea");
-                textArea.value = text;
-                textArea.style.position = "fixed";
-                textArea.style.left = "-999999px";
-                textArea.style.top = "-999999px";
-                textArea.style.opacity = "0";
-                textArea.setAttribute("readonly", "");
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                try {
-                    document.execCommand('copy');
-                    copy();
-                } catch (err) {
-                    console.error('Fallback: Oops, unable to copy', err);
-                } finally {
-                    document.body.removeChild(textArea);
-                }
+                textArea.value = text; textArea.style.position = "fixed"; textArea.style.opacity = "0"; document.body.appendChild(textArea);
+                textArea.focus(); textArea.select();
+                try { document.execCommand('copy'); copy(); } catch (err) { console.error('Fallback failed'); } finally { document.body.removeChild(textArea); }
             }
         }
     </script>
@@ -272,9 +252,9 @@
         <div class="flex-1 overflow-y-auto py-6">
             <div class="px-4">
                 <nav class="space-y-2">
-                    <a href="/server/{{ guild_id }}/permissions" id="btn-roles" class="tab-btn block w-full text-left px-5 py-3.5 rounded-xl bg-[#ff003c]/20 text-[#ff003c] font-bold text-base border border-[#ff003c]/30 shadow-[0_0_15px_rgba(255,0,60,0.2)] transition-all flex items-center gap-3">
+                    <button id="btn-roles" onclick="switchTab('roles')" class="tab-btn block w-full text-left px-5 py-3.5 rounded-xl bg-[#ff003c]/20 text-[#ff003c] font-bold text-base border border-[#ff003c]/30 shadow-[0_0_15px_rgba(255,0,60,0.2)] transition-all flex items-center gap-3">
                         <span class="text-xl">🛡️</span> Role management
-                    </a>
+                    </button>
                     <button id="btn-users" onclick="switchTab('users')" class="tab-btn w-full text-left px-5 py-3.5 rounded-xl text-white/70 border border-transparent hover:bg-white/5 hover:text-white transition-all text-base font-medium flex items-center gap-3">
                         <span class="text-xl">👤</span> User Directory
                     </button>
@@ -283,6 +263,9 @@
                     </button>
                     <button id="btn-channels" onclick="switchTab('channels')" class="tab-btn w-full text-left px-5 py-3.5 rounded-xl text-white/70 border border-transparent hover:bg-white/5 hover:text-white transition-all text-base font-medium flex items-center gap-3">
                         <span class="text-xl">📁</span> Channel Matrix
+                    </button>
+                    <button id="btn-billing" onclick="switchTab('billing')" class="tab-btn w-full text-left px-5 py-3.5 rounded-xl text-white/70 border border-transparent hover:bg-white/5 hover:text-white transition-all text-base font-medium flex items-center gap-3">
+                        <span class="text-xl">💳</span> Billing
                     </button>
                 </nav>
             </div>
@@ -301,6 +284,18 @@
                     <a href="/server/{{ guild_id }}/premium" class="block w-full text-center bg-white text-black font-black uppercase tracking-widest text-xs py-2.5 rounded-lg hover:bg-gray-200 transition-colors">Upgrade Now</a>
                 </div>
             </div>
+            {% else %}
+            <div class="bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-2xl p-5 relative overflow-hidden group">
+                <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                <div class="relative z-10">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-xl">💎</span>
+                        <h4 class="text-emerald-400 font-black uppercase tracking-widest text-sm">Sylas Premium</h4>
+                    </div>
+                    <p class="text-white/60 text-xs mb-4 leading-relaxed">Thank you for securing your server with the ultimate defense matrix.</p>
+                    <a href="/server/{{ guild_id }}/premium" class="block w-full text-center bg-white text-black font-black uppercase tracking-widest text-xs py-2.5 rounded-lg hover:bg-gray-200 transition-colors">Renew Now</a>
+                </div>
+            </div>
             {% endif %}
             <a href="/dashboard" class="block text-center w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl transition-all text-sm">← Dashboard</a>
         </div>
@@ -310,8 +305,8 @@
         <div class="max-w-6xl mx-auto">
             <header class="mb-10 flex justify-between items-end border-b border-white/10 pb-6">
                 <div>
-                    <h2 class="text-4xl md:text-5xl font-black text-white mb-2 tracking-tighter">Role permission manager</h2>
-                    <p class="text-white/50 text-lg font-light">Real-time role management for <span class="text-white font-medium">{{ guild_name }}</span>.</p>
+                    <h2 id="page-title" class="text-4xl md:text-5xl font-black text-white mb-2 tracking-tighter">Role permission manager</h2>
+                    <p id="page-desc" class="text-white/50 text-lg font-light">Real-time role management for <span class="text-white font-medium">{{ guild_name }}</span>.</p>
                 </div>
                 <div class="flex items-center gap-3">
                     <div class="hidden md:flex items-center gap-3 bg-black/40 border border-white/10 px-6 py-2.5 rounded-full">
@@ -511,7 +506,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {% for c in channels %}
                 {% if c.type == 'text' or c.type == 'voice' or c.type == 'category' or c.type == 'news' %}
-                <div class="liquid-glass border border-white/5 hover:border-white/30 p-5 rounded-2xl flex justify-between items-center transition-all cursor-pointer group hover:bg-white/[0.03]" onclick="openChannelModal('{{ c.id }}', '{{ c.name }}')">
+                <div class="liquid-glass border border-white/5 hover:border-white/30 p-5 rounded-2xl flex justify-between items-center transition-all cursor-pointer group hover:bg-white/[0.03]" onclick="openChannelModal('{{ c.id }}', '{{ c.name }}', '{{ c.type }}')">
                     <div class="flex items-center gap-4 truncate">
                         {% if c.type == 'text' %}
                         <span class="text-white/20 font-light text-2xl group-hover:text-white/50 transition-colors">#</span>
@@ -524,7 +519,7 @@
                         {% endif %}
                         <span class="font-bold text-white text-lg truncate flex items-center gap-2">
                             {{ c.name }}
-                            </span>
+                        </span>
                     </div>
                     <div class="flex items-center gap-3">
                         <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -536,6 +531,73 @@
                 </div>
                 {% endif %}
                 {% endfor %}
+                </div>
+            </div>
+
+            <div id="billing" class="tab-content hidden liquid-glass p-10 rounded-3xl relative z-10 max-w-4xl mx-auto">
+                <h3 class="text-3xl font-bold text-white tracking-tight mb-8">Server Subscription</h3>
+                
+                {% if has_premium and premium_expires_at %}
+                <div class="bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-emerald-500/30 rounded-2xl p-8 mb-10 flex flex-col md:flex-row justify-between items-center gap-6 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                    <div>
+                        <span class="text-emerald-400 font-black uppercase tracking-[0.3em] text-xs mb-2 block">Matrix Active</span>
+                        <div id="premium-countdown" class="text-4xl font-mono font-black text-white" data-expires="{{ premium_expires_at }}">
+                            Calculating...
+                        </div>
+                    </div>
+                    <a href="/server/{{ guild_id }}/premium" class="bg-emerald-500 hover:bg-emerald-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)] text-sm uppercase tracking-widest whitespace-nowrap">
+                        Renew License
+                    </a>
+                </div>
+                <script>
+                    function updateBillingCountdown() {
+                        const el = document.getElementById('premium-countdown');
+                        if (!el) return;
+                        const expiresDate = new Date(el.getAttribute('data-expires'));
+                        const diff = expiresDate - new Date();
+                        if (diff <= 0) { el.textContent = "EXPIRED"; el.classList.add('text-[#ff003c]'); return; }
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+                        const minutes = Math.floor((diff / 1000 / 60) % 60);
+                        if (days > 0) { el.textContent = `${days} Days, ${hours} Hours`; } 
+                        else { el.textContent = `${hours} Hours, ${minutes} Min`; }
+                    }
+                    setInterval(updateBillingCountdown, 60000); updateBillingCountdown();
+                </script>
+                {% else %}
+                <div class="bg-gradient-to-br from-[#ff003c]/10 to-[#7000ff]/10 border border-white/10 rounded-2xl p-8 mb-10 flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div>
+                        <span class="text-white/40 font-black uppercase tracking-[0.3em] text-xs mb-2 block">Standard Matrix</span>
+                        <div class="text-2xl font-bold text-white">No active subscription</div>
+                    </div>
+                    <a href="/server/{{ guild_id }}/premium" class="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-black px-8 py-4 rounded-xl transition-all text-sm uppercase tracking-widest whitespace-nowrap">
+                        Upgrade
+                    </a>
+                </div>
+                {% endif %}
+
+                <h4 class="text-white/70 font-bold uppercase tracking-widest text-sm mb-6 border-b border-white/10 pb-3">Transaction Ledger</h4>
+                <div class="space-y-4">
+                    {% for p in guild_payments %}
+                    <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex justify-between items-center">
+                        <div>
+                            <p class="text-white font-mono text-lg font-black">${{ p.amount }} <span class="text-white/40 text-xs font-sans tracking-wide font-normal ml-2">{{ p.days }} Days</span></p>
+                            <p class="text-white/40 text-[10px] mt-1 font-mono">ID: {{ p.internal_order_id }} | {{ p.created_at[:10] }}</p>
+                        </div>
+                        <div>
+                            {% if p.status == 'paid' %}
+                            <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider">Completed</span>
+                            {% else %}
+                            <span class="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider">{{ p.status }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% if not guild_payments %}
+                    <div class="text-center py-10 border border-white/5 border-dashed rounded-xl">
+                        <p class="text-white/30 italic text-sm">No transaction history found for this server.</p>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -580,50 +642,52 @@
     </div>
 
     <div id="channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-2xl p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
+        <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-3xl p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
             <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"></div>
-            <h3 id="modal-channel-name" class="text-2xl font-black text-white mb-8 tracking-tight">Configure Overrides</h3>
+            <h3 id="modal-channel-name" class="text-3xl font-black text-white mb-8 tracking-tight">Matrix Override</h3>
             
-            <form id="override-form" method="post" class="space-y-6 relative z-10">
+            <form id="override-form" method="post" class="space-y-8 relative z-10">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" id="modal-channel-id" name="channel_id">
                 
                 <div>
-                    <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Target Role Vector</label>
-                    <select name="role_id" class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
+                    <label class="block text-white/40 text-xs font-black mb-3 uppercase tracking-widest">Target Role Vector</label>
+                    <select name="role_id" class="cyber-select w-full bg-[#0a0a0c] border border-white/10 text-white p-4 rounded-xl focus:border-cyan-500 font-bold text-sm">
                         {% for role in roles %}
                             <option value="{{ role.id }}">{{ role.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-black/20 p-6 rounded-2xl border border-white/5 max-h-[50vh] overflow-y-auto">
-                    {% for perm in [
-                        ('view_channel', 'View Channel'), 
-                        ('send_messages', 'Send Messages'), 
-                        ('embed_links', 'Embed Links'), 
-                        ('attach_files', 'Attach Files'),
-                        ('manage_messages', 'Manage Messages'),
-                        ('read_message_history', 'Read Message History'),
-                        ('mention_everyone', 'Mention @everyone'),
-                        ('use_external_emojis', 'Use External Emojis'),
-                        ('add_reactions', 'Add Reactions'),
-                        ('connect', 'Connect (Voice)'),
-                        ('speak', 'Speak (Voice)'),
-                        ('mute_members', 'Mute Members'),
-                        ('deafen_members', 'Deafen Members'),
-                        ('move_members', 'Move Members'),
-                        ('use_voice_activation', 'Use Voice Activity'),
-                        ('request_to_speak', 'Request to Speak (Stage)'),
-                        ('manage_events', 'Manage Events'),
-                        ('send_messages_in_threads', 'Send Messages in Threads'),
-                        ('create_public_threads', 'Create Public Threads'),
-                        ('create_private_threads', 'Create Private Threads'),
-                        ('manage_threads', 'Manage Threads')
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 bg-[#0a0a0c] p-6 rounded-2xl border border-white/5 max-h-[50vh] overflow-y-auto">
+                    {% set perms = [
+                        ('view_channel', 'View Channel', 'all'),
+                        ('send_messages', 'Send Messages', 'text category news'),
+                        ('embed_links', 'Embed Links', 'text category news'),
+                        ('attach_files', 'Attach Files', 'text category news'),
+                        ('manage_messages', 'Manage Messages', 'text category news'),
+                        ('read_message_history', 'Read Message History', 'text category news'),
+                        ('mention_everyone', 'Mention @everyone', 'text category news'),
+                        ('use_external_emojis', 'Use External Emojis', 'text category news'),
+                        ('add_reactions', 'Add Reactions', 'text category news'),
+                        ('connect', 'Connect (Voice)', 'voice category stage'),
+                        ('speak', 'Speak (Voice)', 'voice category stage'),
+                        ('mute_members', 'Mute Members', 'voice category stage'),
+                        ('deafen_members', 'Deafen Members', 'voice category stage'),
+                        ('move_members', 'Move Members', 'voice category stage'),
+                        ('use_voice_activation', 'Use Voice Activity', 'voice category stage'),
+                        ('request_to_speak', 'Request to Speak', 'stage'),
+                        ('manage_events', 'Manage Events', 'voice stage category'),
+                        ('send_messages_in_threads', 'Send Messages in Threads', 'text category news'),
+                        ('create_public_threads', 'Create Public Threads', 'text category news'),
+                        ('create_private_threads', 'Create Private Threads', 'text category news'),
+                        ('manage_threads', 'Manage Threads', 'text category news')
                     ] %}
-                    <div class="flex justify-between items-center border-b border-white/5 pb-3">
-                        <span class="text-white/80 text-sm font-bold tracking-wide">{{ perm[1] }}</span>
-                        <select name="{{ perm[0] }}" class="bg-black/60 text-xs font-bold text-white rounded p-2 border border-white/10 focus:border-cyan-500 outline-none">
+                    
+                    {% for id, name, types in perms %}
+                    <div class="perm-row flex justify-between items-center py-2 border-b border-white/5 {% for t in types.split(' ') %}type-{{t}} {% endfor %}">
+                        <span class="text-white font-bold text-[13px] tracking-wide">{{ name }}</span>
+                        <select name="{{ id }}" class="cyber-select bg-[#141519] text-[11px] font-bold text-white rounded-lg px-3 py-2 w-32 border border-white/10 focus:border-cyan-500 transition-colors">
                             <option value="inherit" class="text-white/50">/ Inherit</option>
                             <option value="allow" class="text-emerald-400">✓ Allow</option>
                             <option value="deny" class="text-[#ff003c]">✗ Deny</option>
@@ -632,9 +696,9 @@
                     {% endfor %}
                 </div>
 
-                <div class="flex justify-end gap-3 mt-8">
-                    <button type="button" onclick="closeChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Abort</button>
-                    <button type="submit" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] text-sm uppercase tracking-widest">Compile Override</button>
+                <div class="flex justify-end gap-4 mt-8 pt-4">
+                    <button type="button" onclick="closeChannelModal()" class="px-8 py-3.5 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-xs uppercase tracking-widest">Abort</button>
+                    <button type="submit" class="bg-cyan-500 hover:bg-cyan-400 text-black font-black px-10 py-3.5 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] text-xs uppercase tracking-widest">Compile Override</button>
                 </div>
             </form>
         </div>
@@ -653,7 +717,7 @@
                 </div>
                 <div>
                     <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Channel Type</label>
-                    <select name="channel_type" class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
+                    <select name="channel_type" class="cyber-select w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
                         <option value="text">Text Channel</option>
                         <option value="voice">Voice Channel</option>
                         <option value="category">Category</option>
@@ -703,78 +767,5 @@
     </div>
     {% endif %}
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const rolesForm = document.getElementById('roles-form');
-            const deployBar = document.getElementById('deploy-bar');
-            let hasUnsavedChanges = false;
-
-            if (rolesForm && deployBar) {
-                rolesForm.addEventListener('change', () => {
-                    hasUnsavedChanges = true;
-                    deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
-                    deployBar.classList.add('translate-y-0', 'opacity-100');
-                });
-            }
-
-            if (rolesForm) {
-                rolesForm.addEventListener('submit', () => {
-                    hasUnsavedChanges = false;
-                });
-            }
-
-            document.body.addEventListener('change', (e) => {
-                if (e.target.closest('#roles-form') && e.target.type === 'checkbox') {
-                    hasUnsavedChanges = true;
-                    const deployBar = document.getElementById('deploy-bar');
-                    if(deployBar) {
-                        deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
-                        deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
-                    }
-                }
-            });
-
-            setInterval(() => {
-                let isAnyRoleOpen = false;
-                document.querySelectorAll('[id^="perms-"]').forEach(el => {
-                    if (!el.classList.contains('hidden')) {
-                        isAnyRoleOpen = true;
-                    }
-                });
-                
-                fetch(window.location.href)
-                    .then(response => response.text())
-                    .then(html => {
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(html, 'text/html');
-                        
-                        const tabs = ['roles', 'users', 'bots', 'channels'];
-                        tabs.forEach(tab => {
-                            const currentTab = document.getElementById(tab);
-                            const newTab = doc.getElementById(tab);
-                            if (currentTab && newTab) {
-                                let skipUpdate = false;
-                                if (currentTab.contains(document.activeElement)) skipUpdate = true;
-                                if (tab === 'roles' && (isAnyRoleOpen || hasUnsavedChanges)) skipUpdate = true;
-                                
-                                if (!skipUpdate) {
-                                    const classes = currentTab.className;
-                                    currentTab.innerHTML = newTab.innerHTML;
-                                    currentTab.className = classes;
-                                }
-                            }
-                        });
-                        
-                        if (!isAnyRoleOpen && !hasUnsavedChanges) {
-                            const newRolesForm = document.getElementById('roles-form');
-                            if (newRolesForm) {
-                                originalFormState = new FormData(newRolesForm);
-                            }
-                        }
-                    })
-                    .catch(err => console.error('Auto-refresh failed:', err));
-            }, 2000);
-        });
-    </script>
 </body>
 </html>
