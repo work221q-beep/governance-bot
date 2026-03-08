@@ -17,7 +17,10 @@ from routers.server import server_router
 # Initialize the main FastAPI application
 app = FastAPI(title="Sylas Governance Bot API", version="2.0.0")
 
-# Mount Static Files Directory
+# Mount Static Files Directory (Environment-Resilient)
+import os
+if not os.path.exists("static"):
+    os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Initialize Templates
