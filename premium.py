@@ -38,6 +38,8 @@ async def redeem_license_key(guild_id: str, key: str) -> bool:
             exp = datetime.fromisoformat(exp)
         except ValueError:
             exp = datetime.utcnow() - timedelta(days=1)
+    elif not isinstance(exp, datetime):
+        exp = datetime.utcnow() - timedelta(days=1)
             
     if datetime.utcnow() > exp:
         return False
@@ -61,11 +63,15 @@ async def is_guild_premium(guild_id: int) -> bool:
         return False
     
     exp = sub.get("expires_at")
+    
+    # SECURITY FIX: Strict type enforcement prevents Unhandled TypeError DoS
     if isinstance(exp, str):
         try:
             exp = datetime.fromisoformat(exp)
         except ValueError:
             return False
+    elif not isinstance(exp, datetime):
+        return False
             
     if datetime.utcnow() > exp:
         await guild_premium.delete_one({"guild_id": str(guild_id)})
@@ -80,36 +86,36 @@ async def grant_premium(guild_id: str, days: int):
     if str_guild_id not in guild_locks:
         guild_locks[str_guild_id] = asyncio.Lock()
         
+    # SECURITY FIX: Retaining the lock in memory preserves the Mutex queue 
+    # preventing race conditions from simultaneous requests.
     async with guild_locks[str_guild_id]:
-        try:
-            existing = await guild_premium.find_one({"guild_id": str_guild_id})
-            now = datetime.utcnow()
+        existing = await guild_premium.find_one({"guild_id": str_guild_id})
+        now = datetime.utcnow()
+        
+        if existing and "expires_at" in existing:
+            exp = existing["expires_at"]
+            if isinstance(exp, str):
+                try:
+                    exp = datetime.fromisoformat(exp)
+                except ValueError:
+                    exp = now
+            elif not isinstance(exp, datetime): # Hardened type safety
+                exp = now
             
-            if existing and "expires_at" in existing:
-                exp = existing["expires_at"]
-                if isinstance(exp, str):
-                    try:
-                        exp = datetime.fromisoformat(exp)
-                    except ValueError:
-                        exp = now
-                
-                if exp > now:
-                    new_expiry = exp + timedelta(days=days)
-                else:
-                    new_expiry = now + timedelta(days=days)
+            if exp > now:
+                new_expiry = exp + timedelta(days=days)
             else:
                 new_expiry = now + timedelta(days=days)
-                
-            await guild_premium.update_one(
-                {"guild_id": str_guild_id},
-                {"$set": {"expires_at": new_expiry, "updated_at": now}},
-                upsert=True
-            )
+        else:
+            new_expiry = now + timedelta(days=days)
             
-            await guild_cooldowns.delete_many({"guild_id": str_guild_id})
-        finally:
-            # SECURITY FIX: Guaranteed memory cleanup prevents DB-exception Deadlocks
-            guild_locks.pop(str_guild_id, None)
+        await guild_premium.update_one(
+            {"guild_id": str_guild_id},
+            {"$set": {"expires_at": new_expiry, "updated_at": now}},
+            upsert=True
+        )
+        
+        await guild_cooldowns.delete_many({"guild_id": str_guild_id})
 
 async def check_cooldown(guild_id: int, raid_type: str, is_premium: bool) -> tuple[bool, str]:
     """Checks if a wargame is on cooldown. Returns (Is_Allowed, Time_Remaining_String)"""
@@ -120,9 +126,13 @@ async def check_cooldown(guild_id: int, raid_type: str, is_premium: bool) -> tup
     
     if record:
         last_used = record.get("last_used", now)
+        
+        # SECURITY FIX: Type validation prevents integer/boolean math crashes
         if isinstance(last_used, str):
             try: last_used = datetime.fromisoformat(last_used)
             except ValueError: last_used = now
+        elif not isinstance(last_used, datetime):
+            last_used = now
             
         time_since_last = now - last_used
         cooldown_delta = timedelta(hours=cooldown_hours)

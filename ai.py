@@ -1,4 +1,4 @@
-import os, httpx, asyncio, json, re, secrets
+import os, httpx, asyncio, json, re, secrets, time
 from datetime import datetime
 from db import payload_armory
 from crypto import encrypt_data, decrypt_data
@@ -27,12 +27,13 @@ class TokenBucket:
         self.capacity = capacity
         self.fill_rate = fill_rate
         self.tokens = capacity
-        self.last_fill = datetime.utcnow().timestamp()
+        # SECURITY FIX: Hardware-level monotonic clock prevents time-shift bypasses
+        self.last_fill = time.monotonic()
         self.lock = asyncio.Lock()
 
     async def consume(self, tokens=1):
         async with self.lock:
-            now = datetime.utcnow().timestamp()
+            now = time.monotonic()
             elapsed = now - self.last_fill
             self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
             self.last_fill = now
@@ -187,7 +188,9 @@ async def harvest_loop():
         await asyncio.sleep(15) 
 
 async def get_preloaded_payloads(intensity: int, raid_type: str):
-    cursor = payload_armory.aggregate([{"$match": {"raid_type": raid_type}}, {"$sample": {"size": intensity}}])
+    # SECURITY FIX: Cast raid_type to explicit string to prevent NoSQL dictionary injection
+    safe_raid_type = str(raid_type)
+    cursor = payload_armory.aggregate([{"$match": {"raid_type": safe_raid_type}}, {"$sample": {"size": intensity}}])
     raw_payloads = await cursor.to_list(length=intensity)
     
     payloads = []
@@ -200,7 +203,7 @@ async def get_preloaded_payloads(intensity: int, raid_type: str):
     while len(payloads) < intensity:
         payloads.append({
             "username": f"User_{secrets.randbelow(900)+100}", 
-            "spam_message": f"[Fallback Payload] DB depleted for '{raid_type}'.", 
+            "spam_message": f"[Fallback Payload] DB depleted for '{safe_raid_type}'.", 
             "_id": None
         })
         

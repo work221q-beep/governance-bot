@@ -76,7 +76,7 @@ async def home(request: Request):
 @app.get("/login")
 async def login(request: Request, next_url: str = None):
     # SECURITY FIX: Strict regex ensures URL is genuinely relative and defeats /\ bypasses
-    if next_url and not re.match(r'^/[a-zA-Z0-9_\-\?&=/]*$', next_url): next_url = None
+    if next_url and not re.match(r'^/[^/][a-zA-Z0-9_\-\?&=/]*$', next_url): next_url = None
     
     # SECURITY FIX: Generate a cryptographic state token to prevent Login CSRF
     oauth_state = secrets.token_urlsafe(32)
@@ -90,12 +90,12 @@ async def login(request: Request, next_url: str = None):
     response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
 
-# SECURITY FIX: Allow POST for CSRF protection on logout
-@app.api_route("/logout", methods=["GET", "POST"])
+# SECURITY FIX: POST-only execution strictly mitigates embedded-image GET CSRF
+@app.api_route("/logout", methods=["POST"])
 async def logout(request: Request):
     session_id = request.cookies.get("session_id")
     if session_id: await db.sessions.delete_one({"session_id": session_id})
-    response = RedirectResponse(url="/")
+    response = RedirectResponse(url="/", status_code=303)
     response.delete_cookie("session_id", path="/")
     response.delete_cookie("admin_auth", path="/")
     return response
@@ -155,14 +155,13 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     if state and state.startswith("login_"):
         parts = state.split("_", 2)
         
-        # SECURITY FIX: Verify state token matches cookie to prevent CSRF
         expected_state = request.cookies.get("oauth_state")
         if len(parts) != 3 or parts[2] != expected_state:
             return RedirectResponse(url="/login?error=csrf_validation_failed")
             
         if parts[1] != "none":
             parsed_url = urllib.parse.unquote(parts[1])
-            if re.match(r'^/[a-zA-Z0-9_\-\?&=/]*$', parsed_url): redirect_url = parsed_url
+            if re.match(r'^/[^/][a-zA-Z0-9_\-\?&=/]*$', parsed_url): redirect_url = parsed_url
     elif state and state.startswith("invite"): 
         redirect_url = "/"
             
@@ -284,7 +283,9 @@ async def apply_sync_post(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    # SECURITY FIX: Enforce string type to prevent NoneType unhandled exception DoS
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
@@ -371,7 +372,9 @@ async def buy_premium(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
@@ -390,7 +393,6 @@ async def buy_premium(request: Request, guild_id: str):
 
     merchant_wallet = os.getenv("MERCHANT_WALLET", "0x0000000000000000000000000000000000000000")
     
-    # SECURITY FIX: Prevent Host Header Injection / Webhook Hijacking
     base_url = os.getenv("BASE_URL")
     if not base_url:
         raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
@@ -477,20 +479,29 @@ async def redeem_key(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
         
-    # SECURITY FIX: Bind rate limit to user ID to stop distributed array attacks
-    if not hasattr(app.state, 'redeem_rl'): app.state.redeem_rl = {}
+    # SECURITY FIX: Bind rate limit to user ID and sweep stale records to prevent memory exhaustion (DoS).
+    if not hasattr(app.state, 'redeem_rl'): 
+        app.state.redeem_rl = {}
+        
     now = time.time()
     user_id = session_user.get("id")
-    last_attempt = app.state.redeem_rl.get(user_id, 0)
     
+    # Execute memory cleanup (Evict records older than 5 seconds)
+    stale_keys = [k for k, v in app.state.redeem_rl.items() if now - v > 5]
+    for k in stale_keys:
+        app.state.redeem_rl.pop(k, None)
+    
+    last_attempt = app.state.redeem_rl.get(user_id, 0)
     if now - last_attempt < 5:
         return RedirectResponse(f"/server/{guild_id}/premium?error=Please wait 5 seconds before trying again.&error_title=Rate Limited", status_code=303)
+        
     app.state.redeem_rl[user_id] = now
     
     key = form_data.get("license_key", "").strip()
@@ -514,7 +525,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     custom_reason = form_data.get("reason", "No reason provided.")
     include_name = form_data.get("include_name") == "on"
@@ -581,7 +593,8 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     role_id = form_data.get("role_id")
     guild = bot.get_guild(int(guild_id))
@@ -624,7 +637,8 @@ async def create_channel(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     channel_name = form_data.get("channel_name")
     channel_type = form_data.get("channel_type")
@@ -650,7 +664,8 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
@@ -672,7 +687,8 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     new_name = form_data.get("new_name")
     if not new_name or len(new_name) < 1 or len(new_name) > 100: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel name must be between 1 and 100 characters.&error_title=Invalid Name", status_code=303)
