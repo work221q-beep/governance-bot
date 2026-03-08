@@ -10,7 +10,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
-intents.members = True # 👈 CRITICAL FIX: Required for the web dashboard to fetch users
+intents.members = True 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 engine_state = {"active": True}
@@ -20,16 +20,22 @@ active_guild_sessions = set()
 startraid_abort_confirm = {} 
 abort_lock = asyncio.Lock()
 
-# NEW: Spam tracking dictionary for commands
 command_spam_tracker = {}
 
 def check_command_spam(guild_id: int) -> bool:
-    """Rate limits commands: Max 3 uses per 5 seconds per server"""
+    """Rate limits commands: Max 3 uses per 5 seconds per server. Cleans memory automatically."""
     now = discord.utils.utcnow().timestamp()
+    
+    # FIX 5: Sweeps the tracker occasionally to prevent permanent memory leaks from removed servers
+    if random.randint(1, 50) == 1:
+        for gid in list(command_spam_tracker.keys()):
+            command_spam_tracker[gid] = [t for t in command_spam_tracker[gid] if now - t < 5.0]
+            if not command_spam_tracker[gid]:
+                del command_spam_tracker[gid]
+                
     if guild_id not in command_spam_tracker:
         command_spam_tracker[guild_id] = []
     
-    # Keep only timestamps within the last 5 seconds
     command_spam_tracker[guild_id] = [t for t in command_spam_tracker[guild_id] if now - t < 5.0]
     
     if len(command_spam_tracker[guild_id]) >= 3:
@@ -45,8 +51,11 @@ def sanitize_payload(text: str) -> str:
     text = re.sub(r'<@!?\d+>', '[REDACTED USER MENTION]', text)
     text = re.sub(r'<@&\d+>', '[REDACTED ROLE MENTION]', text)
     
-    text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*v[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*y[\u200b\u200c\u200d\uFEFF]*o[\u200b\u200c\u200d\uFEFF]*n[\u200b\u200c\u200d\uFEFF]*e', '@\u200beveryone', text, flags=re.IGNORECASE)
-    text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*h[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*e', '@\u200bhere', text, flags=re.IGNORECASE)
+    # FIX 1: High-Risk ReDoS Vulnerability Patched
+    # Stripping zero-width characters FIRST prevents catastrophic backtracking in regex engine
+    clean_text = re.sub(r'[\u200b\u200c\u200d\uFEFF]', '', text)
+    text = re.sub(r'@everyone', '@\u200beveryone', clean_text, flags=re.IGNORECASE)
+    text = re.sub(r'@here', '@\u200bhere', text, flags=re.IGNORECASE)
     
     invite_pattern = r'(?:https?://)?(?:www\.)?(?:discord\.(?:gg|io|me|li|com/invite)|invite\.gg|dsc\.gg|join\.gg)/[a-zA-Z0-9_-]+'
     text = re.sub(invite_pattern, '[REDACTED INVITE]', text, flags=re.IGNORECASE)
@@ -56,7 +65,12 @@ def sanitize_payload(text: str) -> str:
 def sanitize_username(text: str) -> str:
     text = str(text)
     text = unicodedata.normalize('NFKC', text)
-    text = re.sub(r'(discord|clyde|everyone|here)', '', text, flags=re.IGNORECASE)
+    
+    # FIX 2: Webhook API Bypass Patched
+    # If a payload nests "disdiscordcord", it triggered API errors. Now it just rejects it cleanly.
+    if re.search(r'(discord|clyde|everyone|here)', text, flags=re.IGNORECASE):
+        return "Sylas_Ghost"
+        
     text = re.sub(r'[@#:`]', '', text)
     text = text.strip()
     if not text:
@@ -142,7 +156,6 @@ async def on_ready():
 @bot.tree.command(name="startraid", description="Deploy a Red Team Wargame in this channel")
 @discord.app_commands.default_permissions(administrator=True)
 async def start_raid(interaction: discord.Interaction):
-    # NEW: SPAM PREVENTION
     if check_command_spam(interaction.guild.id):
         await interaction.response.send_message("⚠️ **Rate Limited.** You are sending commands too quickly. Please wait a few seconds.", ephemeral=True)
         return
@@ -218,7 +231,6 @@ async def start_raid(interaction: discord.Interaction):
 @bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
 @discord.app_commands.default_permissions(administrator=True)
 async def end_raid(interaction: discord.Interaction):
-    # NEW: SPAM PREVENTION
     if check_command_spam(interaction.guild.id):
         await interaction.response.send_message("⚠️ **Rate Limited.** You are sending commands too quickly. Please wait a few seconds.", ephemeral=True)
         return
@@ -281,6 +293,13 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
     try:
+        # FIX 4: Clean up any orphaned Sylas webhooks to prevent permanent channel breakage (max 15 webhooks limit)
+        existing_webhooks = await channel.webhooks()
+        for wh in existing_webhooks:
+            if wh.user.id == bot.user.id:
+                try: await wh.delete()
+                except: pass
+                
         webhook = await channel.create_webhook(name=wh_base_name)
         artifacts.append(webhook)
         
@@ -294,7 +313,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         }
         
         for p in all_payloads:
-            # FIX: If the status panel is deleted mid-deployment, stop sending payloads immediately
             wargame = active_wargames.get(game_id)
             if not wargame or wargame.get("cancelled"):
                 break
@@ -348,7 +366,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                     try:
                         channel = bot.get_channel(wargame["channel_id"])
                         if channel:
-                            # Clarified the message so it makes sense for both panels
                             await channel.send("🛑 **Wargame Cancelled.** Training UI panel was deleted by a moderator.", delete_after=10.0)
                     except: pass
                 bot.loop.create_task(send_purge_msg())
@@ -385,7 +402,6 @@ async def on_message_delete(message):
         return
 
     for game_id, wargame in list(active_wargames.items()):
-        # Checks if either the initial dropdown OR the active status panel is deleted
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True

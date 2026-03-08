@@ -26,13 +26,13 @@ ALLOWED_COLLECTIONS = [
     "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions"
 ]
 
-# FIX 3: Object ID validation utility to prevent NoSQL injection via $gt overrides
+# Object ID validation utility to prevent NoSQL injection
 def validate_object_id(doc_id: str) -> ObjectId:
     if not re.match(r'^[a-fA-F0-9]{24}$', doc_id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
     return ObjectId(doc_id)
 
-# NEW FIX: Reliable member fetching to prevent dashboard cache drop errors
+# Reliable member fetching to prevent dashboard cache drop errors
 async def get_reliable_member(guild, user_id: int):
     """Fetches a member from cache, falling back to an API call if missing."""
     member = guild.get_member(user_id)
@@ -72,7 +72,6 @@ async def home(request: Request):
 
 @app.get("/login")
 async def login(next_url: str = None):
-    # Validate next_url to prevent open redirects
     if next_url and not (next_url.startswith("/") and not next_url.startswith("//")):
         next_url = None
     state = f"login_{next_url}" if next_url else "login"
@@ -104,7 +103,6 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     if state and state.startswith("invite"):
         if error:
             return RedirectResponse(url="/")
-        
         parts = state.split("_")
         if len(parts) > 1 and parts[1] and parts[1].isdigit():
             guild_id = parts[1]
@@ -151,7 +149,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     for g in guilds:
         try:
             perms_str = str(g.get("permissions", "0"))
-            if len(perms_str) > 20: continue # Prevent integer overflow attacks
+            if len(perms_str) > 20: continue 
             if g.get("owner") or (int(perms_str) & 0x8) == 0x8:
                 manageable_guilds.append(g)
         except (ValueError, TypeError):
@@ -201,7 +199,6 @@ async def dashboard(request: Request):
     
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
     
-    # Check premium status for all guilds
     for guild in session_user.get("guilds", []):
         guild["is_premium"] = await is_guild_premium(guild["id"])
         
@@ -245,11 +242,8 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
         return RedirectResponse("/dashboard?error=You do not have permission to access this server.")
         
     roles, users, bots, channels = [], [], [], []
-    
-    # Fetch member reliably
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if bot_in_guild else None
 
-    # Re-verify permissions if bot is in guild (prevents stale session access)
     if bot_in_guild and web_member:
         if not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
             return RedirectResponse("/dashboard?error=Your permissions in this server have changed. Access denied.")
@@ -290,15 +284,12 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
                 "id": str(m.id), "name": m.name, "display_name": m.display_name,
                 "avatar": avatar, "top_role": m.top_role.name if m.top_role else "None"
             }
-            if m.bot: 
-                bots.append(member_data)
-            else: 
-                users.append(member_data)
+            if m.bot: bots.append(member_data)
+            else: users.append(member_data)
                 
         sorted_channels = []
         for category, channels_in_cat in guild.by_category():
-            if category:
-                sorted_channels.append(category)
+            if category: sorted_channels.append(category)
             sorted_channels.extend(channels_in_cat)
             
         for c in sorted_channels:
@@ -325,14 +316,13 @@ async def apply_sync_post(request: Request, guild_id: str):
         return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     if not guild: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # FIX 5: Strict Guild Permission Re-verification on POST (Reliable Fetch)
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -345,28 +335,21 @@ async def apply_sync_post(request: Request, guild_id: str):
     ]
     
     for role in guild.roles:
-        if role >= guild.me.top_role and guild.owner_id != guild.me.id: 
-            continue
-        if role.managed: 
-            continue
+        if role >= guild.me.top_role and guild.owner_id != guild.me.id: continue
+        if role.managed: continue
             
         perms_list = form_data.getlist(f"perms_{role.id}")
         current_kwargs = {}
         for prop in dir(role.permissions):
             if not prop.startswith('_') and prop != 'value' and isinstance(getattr(type(role.permissions), prop, None), property):
-                try: 
-                    current_kwargs[prop] = getattr(role.permissions, prop)
-                except: 
-                    pass
+                try: current_kwargs[prop] = getattr(role.permissions, prop)
+                except: pass
                     
         for p in managed_perms:
             current_kwargs[p] = p in perms_list
             
-        try: 
-            new_perms = discord.Permissions(**current_kwargs)
-        except Exception as e: 
-            print(f"Error creating permissions for {role.name}: {e}")
-            new_perms = role.permissions
+        try: new_perms = discord.Permissions(**current_kwargs)
+        except Exception as e: new_perms = role.permissions
         
         if role.permissions.value != new_perms.value:
             try:
@@ -389,7 +372,6 @@ async def premium_manager(request: Request, guild_id: str):
     guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
 
     has_premium = await is_guild_premium(int(guild_id))
-    
     from db import guild_premium
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
@@ -397,10 +379,8 @@ async def premium_manager(request: Request, guild_id: str):
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
         if str(g["id"]) == str(guild_id):
-            if g.get("owner"): 
-                user_power = "Owner"
-            elif (int(g.get("permissions", 0)) & 0x8) == 0x8: 
-                user_power = "Administrator"
+            if g.get("owner"): user_power = "Owner"
+            elif (int(g.get("permissions", 0)) & 0x8) == 0x8: user_power = "Administrator"
             break
 
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if bot_in_guild else None
@@ -417,11 +397,10 @@ async def premium_manager(request: Request, guild_id: str):
 @app.post("/server/{guild_id}/redeem_key")
 async def redeem_key(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
@@ -430,13 +409,11 @@ async def redeem_key(request: Request, guild_id: str):
         raise HTTPException(status_code=403, detail="Permission denied")
         
     key = form_data.get("license_key", "").strip()
-    
     if not re.match(r'^SYLAS-PREM-[A-Z0-9]{8}-[A-Z0-9]{4}$', key):
         return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid license key format.&error_title=Redemption Failed", status_code=303)
     
     from ai import TokenBucket
-    if not hasattr(app.state, 'redeem_ratelimit'): 
-        app.state.redeem_ratelimit = {}
+    if not hasattr(app.state, 'redeem_ratelimit'): app.state.redeem_ratelimit = {}
     if guild_id not in app.state.redeem_ratelimit:
         app.state.redeem_ratelimit[guild_id] = TokenBucket(capacity=5, fill_rate=1/60) 
         
@@ -446,10 +423,8 @@ async def redeem_key(request: Request, guild_id: str):
     from premium import redeem_license_key
     success = await redeem_license_key(guild_id, key)
     
-    if success: 
-        return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: 
-        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or expired license key.&error_title=Redemption Failed", status_code=303)
+    if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or expired license key.&error_title=Redemption Failed", status_code=303)
 
 @app.post("/server/{guild_id}/buy_premium")
 async def buy_premium(request: Request, guild_id: str):
@@ -457,11 +432,10 @@ async def buy_premium(request: Request, guild_id: str):
     from db import payments
     
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
@@ -492,15 +466,10 @@ async def buy_premium(request: Request, guild_id: str):
             if data.get("success"):
                 c2p_order_id = data.get("order_id")
                 await payments.insert_one({
-                    "internal_order_id": order_id,
-                    "chain2pay_order_id": c2p_order_id,
-                    "guild_id": guild_id,
-                    "user_id": session_user.get("id"),
-                    "amount": amount,
-                    "days": days,
-                    "status": "pending",
-                    "ipn_token": data.get("ipn_token"),
-                    "created_at": datetime.datetime.utcnow()
+                    "internal_order_id": order_id, "chain2pay_order_id": c2p_order_id,
+                    "guild_id": guild_id, "user_id": session_user.get("id"),
+                    "amount": amount, "days": days, "status": "pending",
+                    "ipn_token": data.get("ipn_token"), "created_at": datetime.datetime.utcnow()
                 })
                 return RedirectResponse(data["payment_url"], status_code=303)
             else:
@@ -520,30 +489,30 @@ async def payment_webhook(request: Request):
     ipn_token = request.query_params.get("ipn_token")
     signature = request.query_params.get("signature")
     
-    if not c2p_order_id: 
-        return {"status": "ignored"}
+    if not c2p_order_id: return {"status": "ignored"}
         
     payment = await payments.find_one({"chain2pay_order_id": c2p_order_id})
-    if not payment or payment["status"] == "paid": 
-        return {"status": "ok"}
+    if not payment or payment["status"] == "paid": return {"status": "ok"}
         
     if payment.get("ipn_token") and payment.get("ipn_token") != ipn_token:
         return {"status": "unauthorized"}
 
-    # FIX 7: Payment Webhook HMAC Signature Verification to prevent forged tx completions
     if signature:
         PAYMENT_SECRET = os.getenv("PAYMENT_SECRET", "").encode()
         payload = f"{c2p_order_id}:{txid_out}:{value_coin}".encode()
         expected_sig = hmac.new(PAYMENT_SECRET, payload, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected_sig):
             return {"status": "unauthorized", "reason": "Invalid signature"}
+
+    try:
+        paid_amount = int(float(value_coin) * 100) if value_coin else 0
+    except ValueError:
+        return {"status": "error", "reason": "Invalid coin value"}
             
-    paid_amount = int(float(value_coin) * 100) if value_coin else 0
     expected_amount = int(float(payment["amount"]) * 100)
     
     if paid_amount >= expected_amount:
         await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "paid", "txid_out": txid_out}})
-        
         key = await generate_license_key(payment["days"])
         await redeem_license_key(payment["guild_id"], key)
         
@@ -553,8 +522,7 @@ async def payment_webhook(request: Request):
                 guild = bot.get_guild(int(payment["guild_id"]))
                 guild_name = guild.name if guild else "your server"
                 await user.send(f"🎉 **Payment Successful!**\n\nYour subscription for **{guild_name}** has been activated.\n**License Key:** `{key}` (Auto-redeemed)\n**Duration:** {payment['days']} Days\n**Transaction ID:** `{txid_out}`\n\nThank you for upgrading to Sylas Premium!")
-        except: 
-            pass
+        except: pass
     else:
         print(f"Payment amount mismatch: Expected {expected_amount}, got {paid_amount}")
                 
@@ -563,11 +531,10 @@ async def payment_webhook(request: Request):
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     custom_reason = form_data.get("reason", "No reason provided.")
@@ -576,27 +543,19 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     admin_name = session_user.get('username')
     guild = bot.get_guild(int(guild_id))
-    if not guild: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     target = guild.get_member(int(target_id))
-    if not target: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # FIX 5: Strict Permission verified on POST (Reliable Fetch)
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
-    if not web_member: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not web_member: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     has_perm = False
-    if action == "ban" and web_member.guild_permissions.ban_members: 
-        has_perm = True
-    elif action == "kick" and web_member.guild_permissions.kick_members: 
-        has_perm = True
-    elif action == "timeout" and web_member.guild_permissions.moderate_members: 
-        has_perm = True
-    elif web_member.guild_permissions.administrator or guild.owner_id == web_member.id: 
-        has_perm = True
+    if action == "ban" and web_member.guild_permissions.ban_members: has_perm = True
+    elif action == "kick" and web_member.guild_permissions.kick_members: has_perm = True
+    elif action == "timeout" and web_member.guild_permissions.moderate_members: has_perm = True
+    elif web_member.guild_permissions.administrator or guild.owner_id == web_member.id: has_perm = True
     
     if not has_perm:
         return RedirectResponse(f"/server/{guild_id}/permissions?error=You lack the required permissions to perform this action.&error_title=Access Denied", status_code=303)
@@ -613,32 +572,22 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     from db import db
     await db.audit_logs.insert_one({
-        "action": action,
-        "guild_id": guild_id,
-        "target_id": target_id,
-        "admin_id": session_user.get("id"),
-        "reason": custom_reason,
+        "action": action, "guild_id": guild_id, "target_id": target_id,
+        "admin_id": session_user.get("id"), "reason": custom_reason,
         "timestamp": datetime.datetime.utcnow()
     })
     
-    if include_name: 
-        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
-    else: 
-        dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}"
+    if include_name: dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}\n*Action triggered by Web Admin: {admin_name}*"
+    else: dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}"
 
     if not target.bot:
-        try: 
-            await target.send(dm_message)
-        except discord.Forbidden: 
-            pass
+        try: await target.send(dm_message)
+        except discord.Forbidden: pass
             
     try:
-        if action == "kick": 
-            await target.kick(reason=audit_log_reason)
-        elif action == "ban": 
-            await target.ban(reason=audit_log_reason)
-        elif action == "timeout": 
-            await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
+        if action == "kick": await target.kick(reason=audit_log_reason)
+        elif action == "ban": await target.ban(reason=audit_log_reason)
+        elif action == "timeout": await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
     except discord.Forbidden:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.&error_title=Permission Denied", status_code=303)
             
@@ -647,22 +596,19 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
 @app.post("/server/{guild_id}/channel/{channel_id}/override")
 async def channel_override(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     role_id = form_data.get("role_id")
     guild = bot.get_guild(int(guild_id))
-    if not guild: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     channel = guild.get_channel(int(channel_id))
     role = guild.get_role(int(role_id)) if role_id else guild.default_role
     
-    # FIX 5: Re-verification on POST (Reliable Fetch)
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or not (web_member.guild_permissions.administrator or web_member.guild_permissions.manage_channels or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -681,15 +627,11 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
         ]
         for perm in extended_perms:
             val = form_data.get(perm)
-            if val == "allow": 
-                setattr(overwrite, perm, True)
-            elif val == "deny": 
-                setattr(overwrite, perm, False)
-            elif val == "inherit": 
-                setattr(overwrite, perm, None)
+            if val == "allow": setattr(overwrite, perm, True)
+            elif val == "deny": setattr(overwrite, perm, False)
+            elif val == "inherit": setattr(overwrite, perm, None)
             
-        try: 
-            await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
+        try: await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
         except discord.Forbidden:
             return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to manage this channel.&error_title=Channel Access Denied", status_code=303)
             
@@ -698,31 +640,26 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
 @app.post("/server/{guild_id}/channel/create")
 async def create_channel(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     channel_name = form_data.get("channel_name")
     channel_type = form_data.get("channel_type")
     
     guild = bot.get_guild(int(guild_id))
-    if not guild: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
         
     try:
-        if channel_type == "text": 
-            await guild.create_text_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
-        elif channel_type == "voice": 
-            await guild.create_voice_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
-        elif channel_type == "category": 
-            await guild.create_category(name=channel_name, reason="Sylas Web Admin: Category Created")
+        if channel_type == "text": await guild.create_text_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "voice": await guild.create_voice_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "category": await guild.create_category(name=channel_name, reason="Sylas Web Admin: Category Created")
     except discord.Forbidden:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to create channels.&error_title=Permission Denied", status_code=303)
         
@@ -731,16 +668,14 @@ async def create_channel(request: Request, guild_id: str):
 @app.post("/server/{guild_id}/channel/{channel_id}/delete")
 async def delete_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
-    if not guild: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
@@ -748,8 +683,7 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
         
     channel = guild.get_channel(int(channel_id))
     if channel:
-        try: 
-            await channel.delete(reason="Sylas Web Admin: Channel Deleted")
+        try: await channel.delete(reason="Sylas Web Admin: Channel Deleted")
         except discord.Forbidden:
             return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to delete this channel.&error_title=Permission Denied", status_code=303)
             
@@ -758,11 +692,10 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
 @app.post("/server/{guild_id}/channel/{channel_id}/rename")
 async def rename_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: 
-        return RedirectResponse("/login")
+    if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if form_data.get("csrf_token") != csrf_token:
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     new_name = form_data.get("new_name")
@@ -773,8 +706,7 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel names can only contain alphanumeric characters, dashes, and underscores.&error_title=Invalid Name", status_code=303)
     
     guild = bot.get_guild(int(guild_id))
-    if not guild: 
-        return RedirectResponse(f"/server/{guild_id}/permissions")
+    if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
@@ -782,8 +714,7 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
         
     channel = guild.get_channel(int(channel_id))
     if channel:
-        try: 
-            await channel.edit(name=new_name, reason="Sylas Web Admin: Channel Renamed")
+        try: await channel.edit(name=new_name, reason="Sylas Web Admin: Channel Renamed")
         except discord.Forbidden:
             return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to rename this channel.&error_title=Permission Denied", status_code=303)
             
@@ -798,23 +729,19 @@ async def admin_panel(request: Request, key: str = None):
         response = RedirectResponse("/admin")
         token = secrets.token_urlsafe(32)
         await db.admin_sessions.insert_one({
-            "token": token,
-            "created_at": datetime.datetime.utcnow(),
+            "token": token, "created_at": datetime.datetime.utcnow(),
             "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1)
         })
         response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="lax", max_age=86400)
         return response
         
-    if not admin_auth: 
-        return HTMLResponse("Unauthorized", status_code=403)
+    if not admin_auth: return HTMLResponse("Unauthorized", status_code=403)
         
     session = await db.admin_sessions.find_one({
-        "token": admin_auth,
-        "expires_at": {"$gt": datetime.datetime.utcnow()}
+        "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}
     })
     
-    if not session: 
-        return HTMLResponse("Unauthorized", status_code=403)
+    if not session: return HTMLResponse("Unauthorized", status_code=403)
     
     raw_payloads = await payload_armory.find().sort([("raid_type", 1), ("created_at", -1)]).to_list(1000)
     from crypto import decrypt_data
@@ -837,8 +764,7 @@ async def admin_panel(request: Request, key: str = None):
                 d["username"] = decrypt_data(d.get("username", ""))
                 d["spam_message"] = decrypt_data(d.get("spam_message", ""))
             for k, v in d.items():
-                if isinstance(v, datetime.datetime): 
-                    d[k] = v.isoformat()
+                if isinstance(v, datetime.datetime): d[k] = v.isoformat()
         db_structure[coll_name] = docs
         
     servers = []
@@ -848,17 +774,18 @@ async def admin_panel(request: Request, key: str = None):
         cds = await guild_cooldowns.find({"guild_id": str(guild.id)}).to_list(100)
         cooldown_modules = [cd["raid_type"] for cd in cds]
         servers.append({
-            "id": str(guild.id), 
-            "name": guild.name,
-            "member_count": guild.member_count, 
-            "is_premium": is_prem, 
+            "id": str(guild.id), "name": guild.name,
+            "member_count": guild.member_count, "is_premium": is_prem, 
             "cooldowns": cooldown_modules
         })
         
     from db import license_keys, payments
-    keys = await license_keys.find({"used": False}).sort("expires_at", -1).to_list(1000)
-    for k in keys: 
-        k["_id"] = str(k["_id"])
+    # FIX: Fetch ALL keys so the admin dashboard can sort used vs unused properly
+    keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
+    for k in keys: k["_id"] = str(k["_id"])
+    
+    # Calculate stats for dashboard
+    active_keys_count = sum(1 for k in keys if not k.get("used", False))
         
     all_payments = await payments.find({"status": "paid"}).sort("created_at", -1).to_list(1000)
     total_revenue = sum(float(p.get("amount", 0)) for p in all_payments)
@@ -869,101 +796,77 @@ async def admin_panel(request: Request, key: str = None):
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
         "ai_status": "ONLINE", "db_structure": db_structure,
-        "servers": servers, "license_keys": keys,
+        "servers": servers, "license_keys": keys, "active_keys_count": active_keys_count,
         "payments": all_payments, "total_revenue": total_revenue,
         "gift_logs": all_gifts
     })
 
 @app.post("/admin/toggle_bot")
 async def toggle_bot(request: Request):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
+    if not await check_admin_auth(request): return RedirectResponse("/")
     engine_state["active"] = not engine_state["active"]
     return RedirectResponse("/admin?tab=control", status_code=303)
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
+    if not await check_admin_auth(request): return RedirectResponse("/")
     bg_tasks.add_task(parallel_harvest_sweep)
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
 async def admin_delete_payload(request: Request, payload_id: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
-    valid_id = validate_object_id(payload_id) # FIX 3: Injection Prevention Validation
+    if not await check_admin_auth(request): return RedirectResponse("/")
+    valid_id = validate_object_id(payload_id) 
     await payload_armory.delete_one({"_id": valid_id})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/purge_armory")
 async def admin_purge_armory(request: Request):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 async def check_admin_auth(request: Request):
     admin_auth = request.cookies.get("admin_auth")
-    if not admin_auth: 
-        return False
-        
+    if not admin_auth: return False
     from db import db
     session = await db.admin_sessions.find_one({"token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}})
     return bool(session)
 
 @app.post("/admin/db/drop_collection/{coll_name}")
 async def admin_drop_collection(request: Request, coll_name: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
-    if coll_name not in ALLOWED_COLLECTIONS: 
-        return HTMLResponse("Invalid collection", status_code=400)
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
+    if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     db = payload_armory.database
     await db.drop_collection(coll_name)
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 @app.post("/admin/db/delete_doc/{coll_name}/{doc_id}")
 async def admin_delete_doc(request: Request, coll_name: str, doc_id: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
-    if coll_name not in ALLOWED_COLLECTIONS: 
-        return HTMLResponse("Invalid collection", status_code=400)
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
+    if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     db = payload_armory.database
-    valid_id = validate_object_id(doc_id) # FIX 3: Injection Prevention Validation
+    valid_id = validate_object_id(doc_id) 
     await db[coll_name].delete_one({"_id": valid_id})
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 @app.post("/admin/db/edit_doc/{coll_name}/{doc_id}")
 async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
-    if coll_name not in ALLOWED_COLLECTIONS: 
-        return HTMLResponse("Invalid collection", status_code=400)
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
+    if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     form = await request.form()
     raw_json = form.get("raw_json")
     db = payload_armory.database
     
-    valid_id = validate_object_id(doc_id) # FIX 3: Injection Prevention Validation
+    valid_id = validate_object_id(doc_id) 
     
     try:
         data = json.loads(raw_json)
-        if "_id" in data: 
-            del data["_id"]
-            
+        if "_id" in data: del data["_id"]
         if coll_name == "payload_armory":
             from crypto import encrypt_data
-            if "username" in data: 
-                data["username"] = encrypt_data(data["username"])
-            if "spam_message" in data: 
-                data["spam_message"] = encrypt_data(data["spam_message"])
+            if "username" in data: data["username"] = encrypt_data(data["username"])
+            if "spam_message" in data: data["spam_message"] = encrypt_data(data["spam_message"])
             
         await db[coll_name].update_one({"_id": valid_id}, {"$set": data})
     except Exception as e:
@@ -973,54 +876,42 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
 
 @app.post("/admin/generate_key")
 async def admin_generate_key(request: Request):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     form = await request.form()
     days = int(form.get("days", 30))
     from premium import generate_license_key
     await generate_license_key(days)
-    return RedirectResponse("/admin?tab=billing", status_code=303)
+    return RedirectResponse("/admin?tab=keys", status_code=303)
 
 @app.post("/admin/server/{guild_id}/toggle_premium")
 async def admin_toggle_premium(request: Request, guild_id: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     from premium import is_guild_premium, grant_premium
     from db import guild_premium
     is_prem = await is_guild_premium(int(guild_id))
     
-    if is_prem: 
-        await guild_premium.delete_one({"guild_id": guild_id})
-    else: 
-        await grant_premium(guild_id, 30) 
+    if is_prem: await guild_premium.delete_one({"guild_id": guild_id})
+    else: await grant_premium(guild_id, 30) 
         
     return RedirectResponse("/admin?tab=servers", status_code=303)
 
 @app.post("/admin/server/{guild_id}/reset_cooldowns")
 async def admin_reset_cooldowns(request: Request, guild_id: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     from db import guild_cooldowns
     await guild_cooldowns.delete_many({"guild_id": guild_id})
     return RedirectResponse("/admin?tab=servers", status_code=303)
 
 @app.post("/admin/server/{guild_id}/reset_cooldown/{module}")
 async def admin_reset_cooldown(request: Request, guild_id: str, module: str):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     from db import guild_cooldowns
     await guild_cooldowns.delete_one({"guild_id": guild_id, "raid_type": module})
     return RedirectResponse("/admin?tab=servers", status_code=303)
 
 @app.post("/admin/gift_premium")
 async def admin_gift_premium(request: Request):
-    if not await check_admin_auth(request): 
-        return RedirectResponse("/")
-        
+    if not await check_admin_auth(request): return RedirectResponse("/")
     form = await request.form()
     guild_id = form.get("guild_id")
     days_str = form.get("days", "30")
@@ -1033,10 +924,9 @@ async def admin_gift_premium(request: Request):
     if guild_id:
         await grant_premium(guild_id, days)
         await gift_logs.insert_one({
-            "guild_id": guild_id,
-            "days": days,
+            "guild_id": guild_id, "days": days,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
-        return RedirectResponse(f"/admin?tab=billing&msg=Successfully+gifted+{days}+days+to+{guild_id}", status_code=303)
+        return RedirectResponse(f"/admin?tab=keys&msg=Successfully+gifted+{days}+days+to+{guild_id}", status_code=303)
         
-    return RedirectResponse("/admin?tab=billing", status_code=303)
+    return RedirectResponse("/admin?tab=keys", status_code=303)
