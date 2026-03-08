@@ -57,6 +57,7 @@
             if (msg) {
                 const toast = document.getElementById('msg-toast');
                 if (toast) {
+                    // Use textContent to prevent HTML injection, and encodeURIComponent for URL
                     toast.textContent = msg;
                     toast.classList.remove('hidden');
                     setTimeout(() => {
@@ -83,7 +84,8 @@
                             const newTab = doc.getElementById(tab);
                             if (currentTab && newTab) {
                                 // Don't replace the whole tab if it contains the active element
-                                if (!currentTab.contains(document.activeElement)) {
+                                // Also don't replace the DB tab if a document is open
+                                if (!currentTab.contains(document.activeElement) && !(tab === 'db' && activeDocId !== null)) {
                                     const classes = currentTab.className;
                                     currentTab.innerHTML = newTab.innerHTML;
                                     currentTab.className = classes;
@@ -526,6 +528,8 @@
                 textArea.style.position = "fixed";
                 textArea.style.left = "-999999px";
                 textArea.style.top = "-999999px";
+                textArea.style.opacity = "0";
+                textArea.setAttribute("readonly", "");
                 document.body.appendChild(textArea);
                 textArea.focus();
                 textArea.select();
@@ -534,12 +538,16 @@
                     copy();
                 } catch (err) {
                     console.error('Fallback: Oops, unable to copy', err);
+                } finally {
+                    document.body.removeChild(textArea);
                 }
-                document.body.removeChild(textArea);
             }
         }
 
+        let activeDocId = null;
+
         function openDocument(collection, docId, rawJson) {
+            activeDocId = docId;
             document.getElementById('editor-empty').classList.add('hidden');
             document.getElementById('editor-active').classList.remove('hidden');
             document.getElementById('editor-active').classList.add('flex');

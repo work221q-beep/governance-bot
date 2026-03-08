@@ -213,6 +213,8 @@
                 textArea.style.position = "fixed";
                 textArea.style.left = "-999999px";
                 textArea.style.top = "-999999px";
+                textArea.style.opacity = "0";
+                textArea.setAttribute("readonly", "");
                 document.body.appendChild(textArea);
                 textArea.focus();
                 textArea.select();
@@ -221,8 +223,9 @@
                     copy();
                 } catch (err) {
                     console.error('Fallback: Oops, unable to copy', err);
+                } finally {
+                    document.body.removeChild(textArea);
                 }
-                document.body.removeChild(textArea);
             }
         }
     </script>
@@ -247,7 +250,6 @@
     </div>
     {% else %}
     
-    <!-- UNIFIED SERVER SIDEBAR -->
     <aside class="w-80 liquid-glass border-r border-white/5 flex flex-col z-20 relative bg-black/40">
         <div class="p-6 border-b border-white/5">
             <h1 class="text-3xl font-black tracking-widest text-white">SYLAS <span class="text-[#ff003c]">AI</span></h1>
@@ -267,7 +269,6 @@
         </div>
         
         <div class="flex-1 overflow-y-auto py-6">
-            <!-- Security Sub-Views -->
             <div class="px-4">
                 <nav class="space-y-2">
                     <a href="/server/{{ guild_id }}/permissions" id="btn-roles" class="tab-btn block w-full text-left px-5 py-3.5 rounded-xl bg-[#ff003c]/20 text-[#ff003c] font-bold text-base border border-[#ff003c]/30 shadow-[0_0_15px_rgba(255,0,60,0.2)] transition-all flex items-center gap-3">
@@ -312,13 +313,11 @@
                     <p class="text-white/50 text-lg font-light">Real-time role management for <span class="text-white font-medium">{{ guild_name }}</span>.</p>
                 </div>
                 <div class="flex items-center gap-3">
-                    <!-- User Power Badge -->
                     <div class="hidden md:flex items-center gap-3 bg-black/40 border border-white/10 px-6 py-2.5 rounded-full">
                         <span class="w-2.5 h-2.5 rounded-full {% if user_power == 'Owner' %}bg-[#ff003c]{% elif user_power == 'Administrator' %}bg-cyan-500{% else %}bg-emerald-500{% endif %} shadow-[0_0_10px_currentColor]"></span>
                         <span class="text-white text-[13px] font-black uppercase tracking-[0.2em]">{{ user_power }}</span>
                     </div>
                     
-                    <!-- User Profile -->
                     <div class="flex items-center gap-3 bg-black/40 border border-white/10 px-4 py-2 rounded-full">
                         {% if user_avatar %}
                             <img src="{{ user_avatar }}" class="w-7 h-7 rounded-full border border-white/10">
@@ -328,7 +327,6 @@
                         <span class="text-white text-sm font-bold truncate max-w-[120px]">{{ display_name }}</span>
                     </div>
 
-                    <!-- Logout Button -->
                     <a href="/logout" class="flex items-center justify-center w-11 h-11 bg-black/40 border border-white/10 rounded-full text-white/40 hover:text-[#ff003c] hover:bg-white/10 transition-colors" title="Logout">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                     </a>
@@ -351,9 +349,9 @@
             </div>
             {% endif %}
 
-            <!-- ROLES -->
             <div id="roles" class="tab-content">
                 <form id="roles-form" method="post" action="/server/{{ guild_id }}/sync" class="space-y-6 pb-32">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     {% for role in roles %}
                     <div class="liquid-glass border {% if role.is_everyone %}border-[#ff003c]/50 shadow-[0_0_30px_rgba(255,0,60,0.15)]{% else %}border-white/5 hover:border-white/20{% endif %} rounded-2xl overflow-hidden transition-all duration-300 {% if not role.can_edit %}opacity-80{% endif %}">
                         <div class="bg-black/40 px-6 py-4 flex justify-between items-center {% if role.can_edit %}cursor-pointer hover:bg-white/[0.02]{% endif %} select-none" {% if role.can_edit %}onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')"{% endif %}>
@@ -381,7 +379,6 @@
                         {% if role.can_edit %}
                         <div id="perms-{{ role.id }}" class="hidden p-6 border-t border-white/5 bg-black/20">
                             <div class="flex flex-col gap-6">
-                                <!-- Core Mods -->
                                 <div class="relative bg-black/40 p-5 rounded-xl border border-white/5">
                                     <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-red-500/50 to-transparent rounded-l-xl"></div>
                                     <div class="pl-4">
@@ -397,7 +394,6 @@
                                     </div>
                                 </div>
 
-                                <!-- Text Media -->
                                 <div class="relative bg-black/40 p-5 rounded-xl border border-white/5">
                                     <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500/50 to-transparent rounded-l-xl"></div>
                                     <div class="pl-4">
@@ -413,7 +409,6 @@
                                     </div>
                                 </div>
 
-                                <!-- Voice -->
                                 <div class="relative bg-black/40 p-5 rounded-xl border border-white/5">
                                     <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-emerald-500/50 to-transparent rounded-l-xl"></div>
                                     <div class="pl-4">
@@ -434,7 +429,6 @@
                     </div>
                     {% endfor %}
 
-                    <!-- Floating Save Bar -->
                     <div id="deploy-bar" class="fixed bottom-10 left-[350px] right-10 bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl p-6 flex justify-between items-center z-50 shadow-2xl transition-all duration-500 transform translate-y-[150%] opacity-0 pointer-events-none">
                         <div>
                             <h4 class="font-bold text-white text-xl flex items-center gap-2">
@@ -454,7 +448,6 @@
                 </form>
             </div>
 
-            <!-- USERS -->
             <div id="users" class="tab-content hidden space-y-3">
                 {% for m in users %}
                 <div class="liquid-glass border border-white/5 hover:border-white/10 p-4 rounded-2xl flex justify-between items-center transition-all group">
@@ -492,7 +485,6 @@
                 {% endfor %}
             </div>
 
-            <!-- BOTS -->
             <div id="bots" class="tab-content hidden space-y-3">
                 {% for m in bots %}
                 <div class="liquid-glass border border-cyan-500/20 p-4 rounded-2xl flex justify-between items-center group">
@@ -525,7 +517,6 @@
                 {% endfor %}
             </div>
 
-            <!-- CHANNELS -->
             <div id="channels" class="tab-content hidden">
                 <div class="flex justify-between items-center mb-6">
                     <h3 class="text-2xl font-black text-white">Channel Matrix</h3>
@@ -568,7 +559,6 @@
         </div>
     </main>
 
-    <!-- MODALS -->
     <div id="mod-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="modal-content liquid-glass border border-red-500/30 rounded-3xl w-full max-w-lg p-8 shadow-[0_0_50px_rgba(255,0,60,0.1)] relative overflow-hidden">
             <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#ff003c] to-transparent"></div>
@@ -576,6 +566,7 @@
             <p id="mod-form-action-text" class="text-red-400 text-sm mb-8 font-mono"></p>
             
             <form id="mod-form" method="post" class="space-y-6 relative z-10">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div id="timeout-duration-container" class="hidden">
                     <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Duration Lock</label>
                     <select name="duration" class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-[#ff003c] appearance-none font-mono text-sm">
@@ -611,6 +602,7 @@
             <h3 id="modal-channel-name" class="text-2xl font-black text-white mb-8 tracking-tight">Configure Overrides</h3>
             
             <form id="override-form" method="post" class="space-y-6 relative z-10">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" id="modal-channel-id" name="channel_id">
                 
                 <div>
@@ -665,13 +657,13 @@
         </div>
     </div>
 
-    <!-- CREATE CHANNEL MODAL -->
     <div id="create-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
             <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"></div>
             <h3 class="text-2xl font-black text-white mb-8 tracking-tight">Create Channel</h3>
             
             <form method="post" action="/server/{{ guild_id }}/channel/create" class="space-y-6 relative z-10">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div>
                     <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">Channel Name</label>
                     <input type="text" name="channel_name" required class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold" placeholder="new-channel">
@@ -692,13 +684,13 @@
         </div>
     </div>
 
-    <!-- RENAME CHANNEL MODAL -->
     <div id="rename-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="modal-content liquid-glass border border-cyan-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(6,182,212,0.1)] relative overflow-hidden">
             <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-500 to-transparent"></div>
             <h3 class="text-2xl font-black text-white mb-8 tracking-tight">Rename Channel</h3>
             
             <form id="rename-channel-form" method="post" class="space-y-6 relative z-10">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div>
                     <label class="block text-white/50 text-xs font-bold mb-2 uppercase tracking-widest">New Name</label>
                     <input type="text" id="rename-channel-name" name="new_name" required class="w-full bg-black/40 border border-white/10 text-white p-4 rounded-xl focus:outline-none focus:border-cyan-500 font-bold">
@@ -711,7 +703,6 @@
         </div>
     </div>
 
-    <!-- DELETE CHANNEL MODAL -->
     <div id="delete-channel-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="modal-content liquid-glass border border-red-500/30 rounded-3xl w-full max-w-md p-8 shadow-[0_0_50px_rgba(255,0,60,0.1)] relative overflow-hidden">
             <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#ff003c] to-transparent"></div>
@@ -719,6 +710,7 @@
             <p class="text-white/70 mb-8">Are you sure you want to delete <strong id="delete-channel-name" class="text-white"></strong>? This action cannot be undone.</p>
             
             <form id="delete-channel-form" method="post" class="space-y-6 relative z-10">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="flex justify-end gap-3 mt-8">
                     <button type="button" onclick="closeDeleteChannelModal()" class="px-6 py-3 rounded-xl font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 text-sm uppercase tracking-wider">Cancel</button>
                     <button type="submit" class="bg-[#ff003c] hover:bg-[#ff003c]/80 text-white font-black px-8 py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(255,0,60,0.4)] text-sm uppercase tracking-widest">Delete</button>
@@ -734,6 +726,7 @@
             const deployBar = document.getElementById('deploy-bar');
             let hasUnsavedChanges = false;
 
+            // FIX 1: Explicitly added the closing brace for the `if` block containing the event listener
             if (rolesForm && deployBar) {
                 // Detect changes in the roles form
                 rolesForm.addEventListener('change', () => {
@@ -742,6 +735,7 @@
                     deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
                     deployBar.classList.add('translate-y-0', 'opacity-100');
                 });
+            } // <- This brace ensures the subsequent code executes properly
 
             // Clear unsaved changes flag on submit so it doesn't warn
             if (rolesForm) {
@@ -749,6 +743,18 @@
                     hasUnsavedChanges = false;
                 });
             }
+
+            // Use event delegation for the roles form to avoid re-binding issues
+            document.body.addEventListener('change', (e) => {
+                if (e.target.closest('#roles-form') && e.target.type === 'checkbox') {
+                    hasUnsavedChanges = true;
+                    const deployBar = document.getElementById('deploy-bar');
+                    if(deployBar) {
+                        deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
+                        deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
+                    }
+                }
+            });
 
             // Auto-refresh data every 2 seconds
             setInterval(() => {
@@ -790,16 +796,6 @@
                             const newRolesForm = document.getElementById('roles-form');
                             if (newRolesForm) {
                                 originalFormState = new FormData(newRolesForm);
-                                newRolesForm.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-                                    checkbox.addEventListener('change', () => {
-                                        hasUnsavedChanges = true;
-                                        const deployBar = document.getElementById('deploy-bar');
-                                        if(deployBar) {
-                                            deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
-                                            deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
-                                        }
-                                    });
-                                });
                             }
                         }
                     })

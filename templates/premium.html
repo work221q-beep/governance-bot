@@ -178,6 +178,7 @@
                     </ul>
                     
                     <form method="post" action="/server/{{ guild_id }}/buy_premium">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="plan" value="weekly">
                         <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-xl transition-all relative z-10 uppercase tracking-widest text-sm">
                             Acquire License
@@ -204,6 +205,7 @@
                     </ul>
                     
                     <form method="post" action="/server/{{ guild_id }}/buy_premium">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="plan" value="monthly">
                         <button type="submit" class="w-full cyber-btn font-black py-4 rounded-xl uppercase tracking-widest text-sm relative z-10">
                             Acquire License
@@ -239,6 +241,7 @@
                 {% endif %}
                 
                 <form method="post" action="/server/{{ guild_id }}/redeem_key" class="flex flex-col sm:flex-row gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="text" name="license_key" placeholder="SYLAS-XXXXXXXXXXXXXXXXXXXXXXXX" required class="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white font-mono focus:border-[#ff003c] focus:outline-none focus:ring-1 focus:ring-[#ff003c] transition-colors">
                     <button type="submit" class="cyber-btn px-6 py-3 rounded-xl font-bold uppercase tracking-widest text-sm whitespace-nowrap">Redeem</button>
                 </form>
