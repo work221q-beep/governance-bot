@@ -7,17 +7,27 @@ if not ENCRYPTION_KEY:
 
 fernet = Fernet(ENCRYPTION_KEY.encode())
 
+MAX_PAYLOAD_SIZE = 50000  
+
 def encrypt_data(data: str) -> str:
     if not data:
         return data
-    return fernet.encrypt(data.encode()).decode()
+        
+    data_str = str(data)
+    if len(data_str) > MAX_PAYLOAD_SIZE:
+        return "[PAYLOAD_TOO_LARGE]"
+        
+    return fernet.encrypt(data_str.encode()).decode()
 
 def decrypt_data(data: str) -> str:
     if not data:
         return data
+        
+    data_str = str(data)
+    if len(data_str) > MAX_PAYLOAD_SIZE:
+        return "[DECRYPTION_FAILED_OR_CORRUPT_DATA]"
+        
     try:
-        return fernet.decrypt(data.encode()).decode()
+        return fernet.decrypt(data_str.encode()).decode()
     except Exception:
-        # SECURITY FIX: Fail securely. Do not blindly return plaintext on decryption error.
-        # This guarantees that unencrypted malicious injections are neutralized.
         return "[DECRYPTION_FAILED_OR_CORRUPT_DATA]"
