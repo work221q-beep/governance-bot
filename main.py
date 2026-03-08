@@ -1,4 +1,4 @@
-import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, secrets, re
+import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, secrets, re, hashlib
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -389,71 +389,98 @@ async def buy_premium(request: Request, guild_id: str):
         "created_at": datetime.datetime.utcnow()
     })
 
-    merchant_wallet = os.getenv("MERCHANT_WALLET", "0x0000000000000000000000000000000000000000")
-    
     base_url = os.getenv("BASE_URL")
     if not base_url:
         raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
     base_url = base_url.rstrip('/')
     
+    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
+    if not paymento_api_key:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway API Key missing.", status_code=303)
+    
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post("https://chain2pay.cloud/api/generate", json={
-                "amount": float(amount),
-                "currency": "USD",
-                "merchant_wallet": merchant_wallet,
-                "callback_url": f"{base_url}/api/webhook/chain2pay?id={order_id}",
-                "customer_email": "admin@sylas.ai"
+            print(f"[Paymento] Generating payment link for Order: {order_id}...")
+            resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
+                "Api-key": paymento_api_key,
+                "Content-Type": "application/json",
+                "Accept": "text/plain"
+            }, json={
+                "fiatAmount": str(amount),
+                "fiatCurrency": "USD",
+                "ReturnUrl": f"{base_url}/server/{guild_id}/premium",
+                "orderId": order_id,
+                "Speed": 1, 
+                "EmailAddress": "admin@sylas.ai"
             })
             data = resp.json()
             
             if data.get("success"):
-                payment_url = data.get("payment_url") or data.get("url")
-                c2p_order_id = data.get("order_id")
-                ipn_token = data.get("ipn_token")
+                token = data.get("body")
+                payment_url = f"https://app.paymento.io/gateway?token={token}"
                 
                 await payments.update_one(
                     {"internal_order_id": order_id},
-                    {"$set": {"chain2pay_order_id": c2p_order_id, "ipn_token": ipn_token}}
+                    {"$set": {"paymento_token": token}}
                 )
 
                 if payment_url:
                     return RedirectResponse(payment_url, status_code=303)
         except Exception as e:
-            print(f"Chain2Pay API Error: {e}")
+            print(f"Paymento API Error: {e}")
             
     return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway unavailable. Try again later.", status_code=303)
 
-@app.get("/api/webhook/chain2pay")
-async def chain2pay_webhook(request: Request):
-    internal_id = request.query_params.get("id")
-    txid_out = request.query_params.get("txid_out")
+
+@app.post("/api/webhook/paymento")
+async def paymento_webhook(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("X-HMAC-SHA256-SIGNATURE") or request.headers.get("X-Hmac-Sha256-Signature")
     
+    secret_key = os.getenv("PAYMENTO_SECRET_KEY", "")
+    if not secret_key or not signature:
+        return HTMLResponse("Missing Authentication", status_code=403)
+        
+    calculated_signature = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).hexdigest().upper()
+    if calculated_signature != signature.upper():
+        return HTMLResponse("Invalid HMAC Signature", status_code=403)
+
+    try:
+        payload = json.loads(raw_body.decode('utf-8'))
+    except json.JSONDecodeError:
+        return HTMLResponse("Invalid JSON", status_code=400)
+
+    token = payload.get("Token")
+    order_status = payload.get("OrderStatus")
+    order_id = payload.get("OrderId")
+
+    # Status 7 is Paid in Paymento architecture
+    if order_status != 7:
+        return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
+
     from db import payments
     from premium import generate_license_key, redeem_license_key
     
-    payment = await payments.find_one({"internal_order_id": internal_id})
+    payment = await payments.find_one({"internal_order_id": order_id})
     if not payment or payment.get("status") == "paid":
         return HTMLResponse("Ignored", status_code=200)
 
-    ipn_token = payment.get("ipn_token")
-    if not ipn_token:
-        return HTMLResponse("Missing Security Token", status_code=400)
-
+    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     async with httpx.AsyncClient() as client:
         try:
-            verify_resp = await client.get(f"https://api.chain2pay.cloud/control/payment-status.php?ipn_token={ipn_token}")
+            # Secondary Verification Call Required by Paymento Docs
+            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
+                "Api-key": paymento_api_key,
+                "Content-Type": "application/json"
+            }, json={
+                "token": token
+            })
             verify_data = verify_resp.json()
             
-            # CHAIN2PAY WEBHOOK FIX: Verify via value_coin
-            paid_amount = float(verify_data.get("value_coin", 0))
-            expected_amount = float(payment.get("amount", 0))
-            amount_valid = paid_amount >= expected_amount * 0.95 
-            
-            if verify_data.get("status") == "paid" and amount_valid:
+            if verify_data.get("success"):
                 update_result = await payments.update_one(
                     {"_id": payment["_id"], "status": "pending"}, 
-                    {"$set": {"status": "paid", "txid_out": txid_out}}
+                    {"$set": {"status": "paid", "txid_out": str(payload.get("PaymentId", ""))}}
                 )
                 
                 if update_result.modified_count == 1:
@@ -462,12 +489,13 @@ async def chain2pay_webhook(request: Request):
                     return HTMLResponse("OK", status_code=200)
                 else:
                     return HTMLResponse("Already Processed", status_code=200)
-            elif verify_data.get("status") == "paid" and not amount_valid:
-                return HTMLResponse("Amount Mismatch", status_code=400)
+            else:
+                return HTMLResponse("API Verification Failed", status_code=400)
         except Exception as e:
             print(f"Webhook Verification Failed: {e}")
             
     return HTMLResponse("Unverified Transaction", status_code=400)
+
 
 @app.post("/server/{guild_id}/redeem_key")
 async def redeem_key(request: Request, guild_id: str):
@@ -488,7 +516,6 @@ async def redeem_key(request: Request, guild_id: str):
     now = time.time()
     user_id = session_user.get("id")
     
-    # OOM PREVENTER FIX: Clears dict safely in O(1) without blocking event loop
     if len(app.state.redeem_rl) > 5000:
         app.state.redeem_rl.clear()
     
@@ -700,7 +727,6 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 
 @app.get("/admin")
 async def admin_panel(request: Request):
-    # 1. CRITICAL FIX: URL Key interception to instantly build a secure session without a 403 error
     key_param = request.query_params.get("key")
     if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
         response = RedirectResponse("/admin", status_code=303)
@@ -717,7 +743,6 @@ async def admin_panel(request: Request):
     if admin_auth:
         session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
         
-    # 2. CRITICAL FIX: Soft fail to HTML Login instead of bricking the browser with a 403 Forbidden Lockout
     if not session:
         response = HTMLResponse(
             "<html><body style='background:#030305;color:#f00;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;'>"
