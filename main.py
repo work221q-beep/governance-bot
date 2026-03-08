@@ -204,9 +204,14 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     display_name = web_member.display_name if web_member else (session_user.get("global_name") or session_user.get("username"))
     user_avatar = str(web_member.display_avatar.url) if web_member and web_member.display_avatar else session_user.get("avatar")
     
-    # Billing Info Fetch for new Tab
     from db import payments, guild_premium
-    guild_payments = await payments.find({"guild_id": str(guild_id)}).sort("created_at", -1).to_list(100)
+    yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    # Filter out pending payments older than 24h
+    guild_payments = await payments.find({
+        "guild_id": str(guild_id),
+        "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
+    }).sort("created_at", -1).to_list(100)
+    
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
     
@@ -232,7 +237,6 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
             if m.bot: bots.append(member_data)
             else: users.append(member_data)
                 
-        # FIX: Precise channel sorting mirror matching Discord's native UI hierarchy
         sorted_channels = []
         for category, channels_in_cat in guild.by_category():
             if category: sorted_channels.append(category)
@@ -345,17 +349,21 @@ async def redeem_key(request: Request, guild_id: str):
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
         
     key = form_data.get("license_key", "").strip()
-    if not re.match(r'^SYLAS-PREM-[A-Z0-9]{8}-[A-Z0-9]{4}$', key): return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid license key format.&error_title=Redemption Failed", status_code=303)
     
     from ai import TokenBucket
     if not hasattr(app.state, 'redeem_ratelimit'): app.state.redeem_ratelimit = {}
     if guild_id not in app.state.redeem_ratelimit: app.state.redeem_ratelimit[guild_id] = TokenBucket(capacity=5, fill_rate=1/60) 
     if not await app.state.redeem_ratelimit[guild_id].consume(1): return RedirectResponse(f"/server/{guild_id}/premium?error=Too many redemption attempts. Please try again later.&error_title=Rate Limited", status_code=303)
     
+    from db import license_keys
+    key_doc = await license_keys.find_one({"key": key, "used": False})
+    if not key_doc:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or already consumed license key.&error_title=Redemption Failed", status_code=303)
+
     from premium import redeem_license_key
     success = await redeem_license_key(guild_id, key)
     if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or expired license key.&error_title=Redemption Failed", status_code=303)
+    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
 
 @app.post("/server/{guild_id}/buy_premium")
 async def buy_premium(request: Request, guild_id: str):
@@ -372,51 +380,57 @@ async def buy_premium(request: Request, guild_id: str):
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
         
     plan = form_data.get("plan", "monthly")
-    amount = 5.00 if plan == "weekly" else 17.99
-    days = 7 if plan == "weekly" else 30
+    amount = 5.00 if plan == "weekly" else (190.00 if plan == "yearly" else 17.99)
+    days = 7 if plan == "weekly" else (365 if plan == "yearly" else 30)
     order_id = f"SYLAS-{guild_id}-{uuid.uuid4().hex[:8]}"
     
-    # FIX: Creating an internal Mock Payment gateway intercept to bypass the broken chain2pay.cloud /pay.php links
     await payments.insert_one({
         "internal_order_id": order_id, "guild_id": guild_id, "user_id": session_user.get("id"),
         "amount": amount, "days": days, "status": "pending",
         "created_at": datetime.datetime.utcnow()
     })
-    return RedirectResponse(f"/checkout/mock/{order_id}", status_code=303)
 
-# NEW: Local mock checkout UI to bypass broken API
-@app.get("/checkout/mock/{order_id}")
-async def mock_checkout_get(request: Request, order_id: str):
-    from db import payments
-    payment = await payments.find_one({"internal_order_id": order_id})
-    if not payment: return HTMLResponse("Order not found", status_code=404)
-    html = f"""
-    <html><body style="background:#030305;color:white;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
-        <div style="text-align:center;background:#111;padding:40px;border-radius:20px;border:1px solid #333;">
-            <h2 style="color:#ff003c;margin-bottom:10px;">Sylas Crypto Gateway (MOCK)</h2>
-            <p style="color:gray;">Bypassing broken external API.</p>
-            <p style="font-size:24px;font-weight:bold;margin:20px 0;">Total: ${payment['amount']}</p>
-            <form method="post">
-                <button type="submit" style="background:#10b981;color:black;padding:15px 30px;font-weight:bold;border:none;border-radius:10px;cursor:pointer;font-size:16px;">
-                    Simulate Successful Transaction
-                </button>
-            </form>
-            <a href="/server/{payment['guild_id']}/premium" style="display:block;margin-top:20px;color:gray;text-decoration:none;">Cancel</a>
-        </div>
-    </body></html>
-    """
-    return HTMLResponse(content=html)
+    # Chain2Pay API Integration
+    merchant_wallet = os.getenv("MERCHANT_WALLET", "0x0000000000000000000000000000000000000000")
+    base_url = os.getenv("BASE_URL", str(request.base_url).rstrip('/'))
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post("https://chain2pay.cloud/api/generate", json={
+                "amount": amount,
+                "currency": "USD",
+                "merchant_wallet": merchant_wallet,
+                "callback_url": f"{base_url}/api/webhook/chain2pay?internal_id={order_id}",
+                "customer_email": "admin@sylas.ai"
+            })
+            data = resp.json()
+            payment_url = data.get("url") or data.get("payment_url")
+            if payment_url:
+                return RedirectResponse(payment_url, status_code=303)
+        except Exception as e:
+            print(f"Chain2Pay API Error: {e}")
+            
+    return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway unavailable. Try again later.", status_code=303)
 
-@app.post("/checkout/mock/{order_id}")
-async def mock_checkout_post(request: Request, order_id: str):
+@app.get("/api/webhook/chain2pay")
+async def chain2pay_webhook(request: Request):
+    internal_id = request.query_params.get("internal_id")
+    chain2pay_order_id = request.query_params.get("chain2pay_order_id")
+    txid_out = request.query_params.get("txid_out")
+    
     from db import payments
     from premium import generate_license_key, redeem_license_key
-    payment = await payments.find_one({"internal_order_id": order_id})
+    
+    payment = await payments.find_one({"internal_order_id": internal_id})
     if payment and payment["status"] == "pending":
-        await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "paid", "txid_out": "MOCK_TX_" + secrets.token_hex(8)}})
+        await payments.update_one(
+            {"_id": payment["_id"]}, 
+            {"$set": {"status": "paid", "txid_out": txid_out, "chain2pay_order_id": chain2pay_order_id}}
+        )
         key = await generate_license_key(payment["days"])
         await redeem_license_key(payment["guild_id"], key)
-    return RedirectResponse(f"/server/{payment['guild_id']}/premium?success=true", status_code=303)
+        
+    return HTMLResponse("OK", status_code=200)
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
@@ -448,8 +462,17 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         
     tab = "bots" if target and target.bot else "users"
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
+    
+    # MODERATION DM BUG FIX - Explicitly check Bot Permissions BEFORE sending DM
+    bot_has_perm = False
+    if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
+    elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
+    elif action == "timeout" and guild.me.guild_permissions.moderate_members: bot_has_perm = True
+    elif guild.me.guild_permissions.administrator: bot_has_perm = True
+
+    if not bot_has_perm: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas lacks permissions to perform this action. Check bot settings.&error_title=Bot Permission Error", status_code=303)
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
-            
+
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     from db import db
     await db.audit_logs.insert_one({ "action": action, "guild_id": guild_id, "target_id": target_id, "admin_id": session_user.get("id"), "reason": custom_reason, "timestamp": datetime.datetime.utcnow() })
@@ -463,7 +486,7 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         if action == "kick": await target.kick(reason=audit_log_reason)
         elif action == "ban": await target.ban(reason=audit_log_reason)
         elif action == "timeout": await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
-    except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Bot Permission Error. Ensure Sylas has standard Kick/Ban/Timeout permissions.&error_title=Permission Denied", status_code=303)
+    except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Unknown Bot Permission Error during execution.&error_title=Execution Failed", status_code=303)
             
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
 
@@ -621,8 +644,12 @@ async def admin_panel(request: Request, key: str = None):
     for k in keys: k["_id"] = str(k["_id"])
     active_keys_count = sum(1 for k in keys if not k.get("used", False))
         
-    all_payments = await payments.find({"status": "paid"}).sort("created_at", -1).to_list(1000)
-    total_revenue = sum(float(p.get("amount", 0)) for p in all_payments)
+    # Only show paid, or pending < 24h
+    yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    all_payments = await payments.find({
+        "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
+    }).sort("created_at", -1).to_list(1000)
+    total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
     
     from db import gift_logs
     all_gifts = await gift_logs.find().sort("timestamp", -1).to_list(100)
