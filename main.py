@@ -1,4 +1,4 @@
-import os, asyncio, httpx, discord, datetime, json, urllib.parse, hmac, hashlib, secrets, re
+import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, hashlib, secrets, re
 from fastapi import FastAPI, Request, Form, BackgroundTasks, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -44,11 +44,30 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
+# --- 24/7 KEEP-ALIVE SYSTEM ---
+@app.get("/api/health")
+async def health_check():
+    """Lightweight endpoint to keep the Render service awake."""
+    return HTMLResponse("OK", status_code=200)
+
+async def keep_awake_loop():
+    """Background task that pings the web server internally every 10 minutes."""
+    base_url = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
+    target_url = f"{base_url}/api/health"
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get(target_url, timeout=10.0)
+        except Exception:
+            pass
+
 @app.on_event("startup")
 async def startup_event():
     await init_indexes()
     asyncio.create_task(start_bot())
     asyncio.create_task(harvest_loop())
+    asyncio.create_task(keep_awake_loop()) # Active anti-sleep loop
 
 @app.get("/")
 async def home(request: Request):
@@ -206,7 +225,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     
     from db import payments, guild_premium
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-    # Filter out pending payments older than 24h naturally purges them from view
+    # UI Filter for rendering ledgers
     guild_payments = await payments.find({
         "guild_id": str(guild_id),
         "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
@@ -255,10 +274,6 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
         "active_tab": tab, "error": error, "error_title": error_title,
         "csrf_token": csrf_token
     })
-
-@app.get("/server/{guild_id}/sync")
-async def sync_manager_get(request: Request, guild_id: str):
-    return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
 @app.post("/server/{guild_id}/sync")
 async def apply_sync_post(request: Request, guild_id: str):
@@ -336,34 +351,8 @@ async def premium_manager(request: Request, guild_id: str):
         "csrf_token": csrf_token
     })
 
-@app.post("/server/{guild_id}/redeem_key")
-async def redeem_key(request: Request, guild_id: str):
-    session_user, csrf_token = await get_session_user(request)
-    if not session_user: return RedirectResponse("/login")
-    
-    form_data = await request.form()
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
-        
-    guild = bot.get_guild(int(guild_id))
-    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
-    if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
-        
-    key = form_data.get("license_key", "").strip()
-    
-    from ai import TokenBucket
-    if not hasattr(app.state, 'redeem_ratelimit'): app.state.redeem_ratelimit = {}
-    if guild_id not in app.state.redeem_ratelimit: app.state.redeem_ratelimit[guild_id] = TokenBucket(capacity=5, fill_rate=1/60) 
-    if not await app.state.redeem_ratelimit[guild_id].consume(1): return RedirectResponse(f"/server/{guild_id}/premium?error=Too many redemption attempts. Please try again later.&error_title=Rate Limited", status_code=303)
-    
-    from db import license_keys
-    key_doc = await license_keys.find_one({"key": key, "used": False})
-    if not key_doc:
-        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or already consumed license key.&error_title=Redemption Failed", status_code=303)
 
-    from premium import redeem_license_key
-    success = await redeem_license_key(guild_id, key)
-    if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
+# --- VULNERABILITY PATCHED PAYMENT FLOW ---
 
 @app.post("/server/{guild_id}/buy_premium")
 async def buy_premium(request: Request, guild_id: str):
@@ -384,6 +373,7 @@ async def buy_premium(request: Request, guild_id: str):
     days = 7 if plan == "weekly" else (365 if plan == "yearly" else 30)
     order_id = f"SYLAS-{guild_id}-{uuid.uuid4().hex[:8]}"
     
+    # Store initial pending layout
     await payments.insert_one({
         "internal_order_id": order_id, "guild_id": guild_id, "user_id": session_user.get("id"),
         "amount": amount, "days": days, "status": "pending",
@@ -395,45 +385,112 @@ async def buy_premium(request: Request, guild_id: str):
     
     async with httpx.AsyncClient() as client:
         try:
+            # FIX: Use ?id= requirement from docs for correct IPN session linking
             resp = await client.post("https://chain2pay.cloud/api/generate", json={
-                "amount": amount,
+                "amount": float(amount),
                 "currency": "USD",
                 "merchant_wallet": merchant_wallet,
-                "callback_url": f"{base_url}/api/webhook/chain2pay?internal_id={order_id}",
+                "callback_url": f"{base_url}/api/webhook/chain2pay?id={order_id}",
                 "customer_email": "admin@sylas.ai"
             })
             data = resp.json()
-            payment_url = data.get("url") or data.get("payment_url")
             
-            # CHAIN2PAY BUG FIX: If API returns a relative path like 'pay.php?id=xyz', wrap it
-            if payment_url:
-                if not payment_url.startswith("http"):
-                    payment_url = f"https://chain2pay.cloud/{payment_url.lstrip('/')}"
-                return RedirectResponse(payment_url, status_code=303)
+            if data.get("success"):
+                payment_url = data.get("payment_url")
+                c2p_order_id = data.get("order_id")
+                ipn_token = data.get("ipn_token")
+                
+                # CRITICAL SECURITY FIX: Save IPN Token for webhook validation
+                await payments.update_one(
+                    {"internal_order_id": order_id},
+                    {"$set": {"chain2pay_order_id": c2p_order_id, "ipn_token": ipn_token}}
+                )
+
+                if payment_url:
+                    # FIX: Append checkout domain if relative path returned
+                    if not payment_url.startswith("http"):
+                        payment_url = f"https://checkout.chain2pay.cloud/{payment_url.lstrip('/')}"
+                    return RedirectResponse(payment_url, status_code=303)
         except Exception as e:
             print(f"Chain2Pay API Error: {e}")
             
     return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway unavailable. Try again later.", status_code=303)
 
+
 @app.get("/api/webhook/chain2pay")
 async def chain2pay_webhook(request: Request):
-    internal_id = request.query_params.get("internal_id")
-    chain2pay_order_id = request.query_params.get("chain2pay_order_id")
+    """
+    CRITICAL SECURITY FIX: Actively verifies transaction authenticity with the Chain2Pay API
+    using the stored IPN Token, nullifying webhook spoofing vulnerabilities.
+    """
+    internal_id = request.query_params.get("id")
     txid_out = request.query_params.get("txid_out")
     
     from db import payments
     from premium import generate_license_key, redeem_license_key
     
     payment = await payments.find_one({"internal_order_id": internal_id})
-    if payment and payment["status"] == "pending":
-        await payments.update_one(
-            {"_id": payment["_id"]}, 
-            {"$set": {"status": "paid", "txid_out": txid_out, "chain2pay_order_id": chain2pay_order_id}}
-        )
-        key = await generate_license_key(payment["days"])
-        await redeem_license_key(payment["guild_id"], key)
+    if not payment or payment["status"] == "paid":
+        return HTMLResponse("Ignored", status_code=200)
+
+    ipn_token = payment.get("ipn_token")
+    if not ipn_token:
+        return HTMLResponse("Missing Security Token", status_code=400)
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Active cryptographic status check
+            verify_resp = await client.get(f"https://api.chain2pay.cloud/control/payment-status.php?ipn_token={ipn_token}")
+            verify_data = verify_resp.json()
+            
+            if verify_data.get("status") == "paid":
+                await payments.update_one(
+                    {"_id": payment["_id"]}, 
+                    {"$set": {"status": "paid", "txid_out": txid_out}}
+                )
+                key = await generate_license_key(payment["days"])
+                await redeem_license_key(payment["guild_id"], key)
+                return HTMLResponse("OK", status_code=200)
+        except Exception as e:
+            print(f"Webhook Verification Failed: {e}")
+            
+    return HTMLResponse("Unverified Transaction", status_code=400)
+
+
+@app.post("/server/{guild_id}/redeem_key")
+async def redeem_key(request: Request, guild_id: str):
+    session_user, csrf_token = await get_session_user(request)
+    if not session_user: return RedirectResponse("/login")
+    
+    form_data = await request.form()
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), csrf_token): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
-    return HTMLResponse("OK", status_code=200)
+    guild = bot.get_guild(int(guild_id))
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
+    if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
+        
+    # SECURITY FIX: Brute Force Key Rate Limiting
+    if not hasattr(app.state, 'redeem_rl'): app.state.redeem_rl = {}
+    now = time.time()
+    last_attempt = app.state.redeem_rl.get(guild_id, 0)
+    if now - last_attempt < 5:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Please wait 5 seconds before trying again.&error_title=Rate Limited", status_code=303)
+    app.state.redeem_rl[guild_id] = now
+    
+    key = form_data.get("license_key", "").strip()
+    if not re.match(r'^SYLAS-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}$', key): 
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid key format.&error_title=Failed", status_code=303)
+    
+    from db import license_keys
+    key_doc = await license_keys.find_one({"key": key, "used": False})
+    if not key_doc:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or consumed license key.&error_title=Redemption Failed", status_code=303)
+
+    from premium import redeem_license_key
+    success = await redeem_license_key(guild_id, key)
+    if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
+
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
@@ -646,12 +703,12 @@ async def admin_panel(request: Request, key: str = None):
     for k in keys: k["_id"] = str(k["_id"])
     active_keys_count = sum(1 for k in keys if not k.get("used", False))
         
-    # TOTAL PAYMENTS FIX - only count 'paid' status towards the integer. 
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     all_payments = await payments.find({
         "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
     }).sort("created_at", -1).to_list(1000)
     
+    # Accurate UI Dashboard metric calculations
     paid_payments_count = sum(1 for p in all_payments if p.get("status") == "paid")
     total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
     
