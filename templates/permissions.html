@@ -236,7 +236,7 @@
                 let textArea = document.createElement("textarea");
                 textArea.value = text; textArea.style.position = "fixed"; textArea.style.opacity = "0"; document.body.appendChild(textArea);
                 textArea.focus(); textArea.select();
-                try { document.execCommand('copy'); copy(); } catch (err) { } finally { document.body.removeChild(textArea); }
+                try { document.execCommand('copy'); copy(); } catch (err) {} finally { document.body.removeChild(textArea); }
             }
         }
     </script>
@@ -455,23 +455,6 @@
                         {% endif %}
                     </div>
                     {% endfor %}
-
-                    <div id="deploy-bar" class="fixed bottom-6 left-64 right-0 max-w-4xl mx-auto w-[calc(100%-18rem)] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 flex justify-between items-center z-50 shadow-2xl transition-all duration-500 transform translate-y-[150%] opacity-0 pointer-events-none">
-                        <div>
-                            <h4 class="font-black text-white text-xl flex items-center gap-2">
-                                <span class="text-yellow-500">⚠️</span> Deploy Sync Protocol
-                            </h4>
-                            <p class="text-sm text-white/50 font-light mt-1">This action instantly overwrites the live Discord API matrix.</p>
-                        </div>
-                        <div class="flex gap-4">
-                            <button type="button" onclick="discardChanges()" class="bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold py-3 px-6 rounded-lg uppercase tracking-widest text-sm cursor-pointer transition-all border border-white/10 pointer-events-auto">
-                                Discard
-                            </button>
-                            <button type="submit" onclick="hasUnsavedChanges = false;" class="bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-black py-3 px-8 rounded-lg uppercase tracking-widest text-sm cursor-pointer shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all transform border border-red-50 pointer-events-auto">
-                                Execute Override
-                            </button>
-                        </div>
-                    </div>
                 </form>
             </div>
 
@@ -643,6 +626,23 @@
 
         </div>
     </main>
+
+    <div id="deploy-bar" class="fixed bottom-6 left-64 right-0 max-w-4xl mx-auto w-[calc(100%-18rem)] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 flex justify-between items-center z-50 shadow-2xl transition-all duration-500 transform translate-y-[150%] opacity-0 pointer-events-none">
+        <div>
+            <h4 class="font-black text-white text-xl flex items-center gap-2">
+                <span class="text-yellow-500">⚠️</span> Deploy Sync Protocol
+            </h4>
+            <p class="text-sm text-white/50 font-light mt-1">This action instantly overwrites the live Discord API matrix.</p>
+        </div>
+        <div class="flex gap-4">
+            <button type="button" onclick="discardChanges()" class="bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold py-3 px-6 rounded-lg uppercase tracking-widest text-sm cursor-pointer transition-all border border-white/10 pointer-events-auto">
+                Discard
+            </button>
+            <button form="roles-form" type="submit" onclick="hasUnsavedChanges = false;" class="bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-black py-3 px-8 rounded-lg uppercase tracking-widest text-sm cursor-pointer shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_40px_rgba(220,38,38,0.6)] transition-all transform border border-red-50 pointer-events-auto">
+                Execute Override
+            </button>
+        </div>
+    </div>
 
     <div id="mod-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="modal-content liquid-glass border border-red-500/30 rounded-3xl w-full max-w-lg p-8 shadow-[0_0_50px_rgba(255,0,60,0.1)] relative overflow-hidden">
@@ -816,5 +816,64 @@
     </div>
     {% endif %}
 
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Auto-refresh data every 2 seconds
+            setInterval(() => {
+                // Check if any role accordion is open
+                let isAnyRoleOpen = false;
+                document.querySelectorAll('[id^="perms-"]').forEach(el => {
+                    if (!el.classList.contains('hidden')) {
+                        isAnyRoleOpen = true;
+                    }
+                });
+                
+                fetch(window.location.href)
+                    .then(response => response.text())
+                    .then(html => {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        
+                        const tabs = ['roles', 'users', 'bots', 'channels'];
+                        tabs.forEach(tab => {
+                            const currentTab = document.getElementById(tab);
+                            const newTab = doc.getElementById(tab);
+                            if (currentTab && newTab) {
+                                let skipUpdate = false;
+                                // Don't update if we are interacting with this tab
+                                if (currentTab.contains(document.activeElement)) skipUpdate = true;
+                                // Don't update roles tab if a role is open or has unsaved changes
+                                if (tab === 'roles' && (isAnyRoleOpen || hasUnsavedChanges)) skipUpdate = true;
+                                
+                                if (!skipUpdate) {
+                                    const classes = currentTab.className;
+                                    currentTab.innerHTML = newTab.innerHTML;
+                                    currentTab.className = classes;
+                                }
+                            }
+                        });
+                        
+                        // Re-bind roles form listeners if roles tab was updated
+                        if (!isAnyRoleOpen && !hasUnsavedChanges) {
+                            const newRolesForm = document.getElementById('roles-form');
+                            if (newRolesForm) {
+                                originalFormState = new FormData(newRolesForm);
+                                newRolesForm.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                                    checkbox.addEventListener('change', () => {
+                                        hasUnsavedChanges = true;
+                                        const deployBar = document.getElementById('deploy-bar');
+                                        if(deployBar) {
+                                            deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
+                                            deployBar.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                    })
+                    .catch(err => console.error('Auto-refresh failed:', err));
+            }, 2000);
+        });
+    </script>
 </body>
 </html>
