@@ -5,6 +5,7 @@ from db import payload_armory
 from premium import is_guild_premium, check_cooldown, set_cooldown, PREMIUM_FEATURES
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = DISCORD_TOKEN # Exported for main.py compatibility
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 intents = discord.Intents.default()
@@ -22,16 +23,10 @@ abort_lock = asyncio.Lock()
 
 command_spam_tracker = {}
 
+# SECURITY FIX: Removed random synchronous sweep. Rate limiter only appends now.
 def check_command_spam(guild_id: int) -> bool:
-    """Rate limits commands: Max 3 uses per 5 seconds per server. Cleans memory automatically."""
+    """Rate limits commands: Max 3 uses per 5 seconds per server."""
     now = discord.utils.utcnow().timestamp()
-    
-    # FIX 5: Sweeps the tracker occasionally to prevent permanent memory leaks from removed servers
-    if random.randint(1, 50) == 1:
-        for gid in list(command_spam_tracker.keys()):
-            command_spam_tracker[gid] = [t for t in command_spam_tracker[gid] if now - t < 5.0]
-            if not command_spam_tracker[gid]:
-                del command_spam_tracker[gid]
                 
     if guild_id not in command_spam_tracker:
         command_spam_tracker[guild_id] = []
@@ -44,6 +39,19 @@ def check_command_spam(guild_id: int) -> bool:
     command_spam_tracker[guild_id].append(now)
     return False
 
+# SECURITY FIX: Asynchronous background task prevents main thread blocking (DoS)
+async def sweep_spam_tracker():
+    """Cleans memory asynchronously without freezing the gateway."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        now = discord.utils.utcnow().timestamp()
+        for gid in list(command_spam_tracker.keys()):
+            await asyncio.sleep(0) # Yield to event loop
+            command_spam_tracker[gid] = [t for t in command_spam_tracker[gid] if now - t < 5.0]
+            if not command_spam_tracker[gid]:
+                command_spam_tracker.pop(gid, None)
+        await asyncio.sleep(60)
+
 def sanitize_payload(text: str) -> str:
     text = str(text)
     text = unicodedata.normalize('NFKC', text)
@@ -51,8 +59,7 @@ def sanitize_payload(text: str) -> str:
     text = re.sub(r'<@!?\d+>', '[REDACTED USER MENTION]', text)
     text = re.sub(r'<@&\d+>', '[REDACTED ROLE MENTION]', text)
     
-    # FIX 1: High-Risk ReDoS Vulnerability Patched
-    # Stripping zero-width characters FIRST prevents catastrophic backtracking in regex engine
+    # High-Risk ReDoS Vulnerability Patched
     clean_text = re.sub(r'[\u200b\u200c\u200d\uFEFF]', '', text)
     text = re.sub(r'@everyone', '@\u200beveryone', clean_text, flags=re.IGNORECASE)
     text = re.sub(r'@here', '@\u200bhere', text, flags=re.IGNORECASE)
@@ -66,8 +73,6 @@ def sanitize_username(text: str) -> str:
     text = str(text)
     text = unicodedata.normalize('NFKC', text)
     
-    # FIX 2: Webhook API Bypass Patched
-    # If a payload nests "disdiscordcord", it triggered API errors. Now it just rejects it cleanly.
     if re.search(r'(discord|clyde|everyone|here)', text, flags=re.IGNORECASE):
         return "Sylas_Ghost"
         
@@ -293,11 +298,12 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
     try:
-        # FIX 4: Clean up any orphaned Sylas webhooks to prevent permanent channel breakage (max 15 webhooks limit)
         existing_webhooks = await channel.webhooks()
         for wh in existing_webhooks:
             if wh.user.id == bot.user.id:
-                try: await wh.delete()
+                try: 
+                    await wh.delete()
+                    await asyncio.sleep(0.5) 
                 except: pass
                 
         webhook = await channel.create_webhook(name=wh_base_name)

@@ -18,6 +18,6 @@ def decrypt_data(data: str) -> str:
     try:
         return fernet.decrypt(data.encode()).decode()
     except Exception:
-        # FIX 7: Fallback safely if it's legacy data or fails to decrypt. 
-        # Prevents permanently locking out users who type strings that mimic tokens.
-        return data
+        # SECURITY FIX: Fail securely. Do not blindly return plaintext on decryption error.
+        # This guarantees that unencrypted malicious injections are neutralized.
+        return "[DECRYPTION_FAILED_OR_CORRUPT_DATA]"
