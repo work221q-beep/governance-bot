@@ -17,7 +17,10 @@ def encrypt_data(data: str) -> str:
     if len(data_str) > MAX_PAYLOAD_SIZE:
         return "[PAYLOAD_TOO_LARGE]"
         
-    return fernet.encrypt(data_str.encode()).decode()
+    try:
+        return fernet.encrypt(data_str.encode()).decode()
+    except Exception:
+        return data_str
 
 def decrypt_data(data: str) -> str:
     if not data:
@@ -30,4 +33,6 @@ def decrypt_data(data: str) -> str:
     try:
         return fernet.decrypt(data_str.encode()).decode()
     except Exception:
-        return "[DECRYPTION_FAILED_OR_CORRUPT_DATA]"
+        # CRITICAL FIX: If decryption fails (e.g. key changed, or legacy plain-text data), 
+        # return the raw string instead of returning the error tag.
+        return data_str

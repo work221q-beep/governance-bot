@@ -283,8 +283,8 @@ async def apply_sync_post(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
@@ -371,8 +371,8 @@ async def buy_premium(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
     
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
@@ -398,7 +398,6 @@ async def buy_premium(request: Request, guild_id: str):
     
     async with httpx.AsyncClient() as client:
         try:
-            print(f"[Chain2Pay] Generating payment link for Order: {order_id}...")
             resp = await client.post("https://chain2pay.cloud/api/generate", json={
                 "amount": float(amount),
                 "currency": "USD",
@@ -446,10 +445,10 @@ async def chain2pay_webhook(request: Request):
             verify_resp = await client.get(f"https://api.chain2pay.cloud/control/payment-status.php?ipn_token={ipn_token}")
             verify_data = verify_resp.json()
             
-            # PROPER PAYMENT FIX: Check the 'value_coin' from response, not 'amount'
+            # CHAIN2PAY WEBHOOK FIX: Verify via value_coin
             paid_amount = float(verify_data.get("value_coin", 0))
             expected_amount = float(payment.get("amount", 0))
-            amount_valid = paid_amount >= expected_amount * 0.95  # Allows for 5% crypto routing slippage
+            amount_valid = paid_amount >= expected_amount * 0.95 
             
             if verify_data.get("status") == "paid" and amount_valid:
                 update_result = await payments.update_one(
@@ -476,8 +475,8 @@ async def redeem_key(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
@@ -489,7 +488,7 @@ async def redeem_key(request: Request, guild_id: str):
     now = time.time()
     user_id = session_user.get("id")
     
-    # Fast eviction to prevent OOM without blocking the main event loop
+    # OOM PREVENTER FIX: Clears dict safely in O(1) without blocking event loop
     if len(app.state.redeem_rl) > 5000:
         app.state.redeem_rl.clear()
     
@@ -520,8 +519,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     custom_reason = form_data.get("reason", "No reason provided.")
     include_name = form_data.get("include_name") == "on"
@@ -587,8 +586,8 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     role_id = form_data.get("role_id")
     guild = bot.get_guild(int(guild_id))
@@ -630,8 +629,8 @@ async def create_channel(request: Request, guild_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     channel_name = form_data.get("channel_name")
     channel_type = form_data.get("channel_type")
@@ -657,8 +656,8 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
@@ -680,8 +679,8 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     if not session_user: return RedirectResponse("/login")
     
     form_data = await request.form()
-    if not secure_csrf_check(form_data.get("csrf_token", ""), csrf_token): 
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     new_name = form_data.get("new_name")
     if not new_name or len(new_name) < 1 or len(new_name) > 100: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel name must be between 1 and 100 characters.&error_title=Invalid Name", status_code=303)
@@ -701,24 +700,39 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 
 @app.get("/admin")
 async def admin_panel(request: Request):
+    # 1. CRITICAL FIX: URL Key interception to instantly build a secure session without a 403 error
+    key_param = request.query_params.get("key")
+    if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
+        response = RedirectResponse("/admin", status_code=303)
+        token = secrets.token_urlsafe(32)
+        from db import db
+        await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
+        response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
+        return response
+
     admin_auth = request.cookies.get("admin_auth")
-    if not admin_auth:
-        return HTMLResponse(
+    from db import db, guild_premium
+    
+    session = None
+    if admin_auth:
+        session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
+        
+    # 2. CRITICAL FIX: Soft fail to HTML Login instead of bricking the browser with a 403 Forbidden Lockout
+    if not session:
+        response = HTMLResponse(
             "<html><body style='background:#030305;color:#f00;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;'>"
             "<h2 style='margin-bottom:20px;letter-spacing:0.2em;'>MASTER UPLINK</h2>"
             "<form method='post' action='/admin/auth'><input type='password' name='key' placeholder='Enter Authorization Key' style='background:#111;border:1px solid #f00;color:#f00;padding:12px;font-size:16px;'><button style='background:#f00;color:#000;padding:12px 20px;border:none;cursor:pointer;font-weight:bold;margin-left:10px;'>Initialize</button></form>"
             "</body></html>", status_code=401
         )
-        
-    from db import db, guild_premium
-    session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
-    if not session: return HTMLResponse("Unauthorized Session", status_code=403)
+        if admin_auth:
+            response.delete_cookie("admin_auth", path="/")
+        return response
     
     from db import payments
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     await payments.delete_many({"status": "pending", "created_at": {"$lt": yesterday}})
     
-    # PROPER FIX: Do not filter out innocent payloads, load 360 mixed payloads.
     raw_payloads = await payload_armory.find().sort([("created_at", -1)]).to_list(360)
     
     from crypto import decrypt_data
@@ -756,7 +770,6 @@ async def admin_panel(request: Request):
     keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
     for k in keys: k["_id"] = str(k["_id"])
     
-    # PROPER FIX: Maps the total count of servers with active premium subscriptions 
     now_dt = datetime.datetime.utcnow()
     active_subs_count = await guild_premium.count_documents({"expires_at": {"$gt": now_dt}})
         

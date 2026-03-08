@@ -174,7 +174,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
     try:
-        # GUARANTEED FIX: Clean orphaned webhooks to prevent 403 Forbidden errors
         try:
             existing_webhooks = await channel.webhooks()
             if len(existing_webhooks) >= 8:
@@ -231,13 +230,20 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                 final_embed.description = "All threats neutralized successfully without casualties. Perfect execution."
                 final_embed.color = discord.Color.green()
 
-            try: await status_msg.edit(embed=final_embed, delete_after=15.0)
+            # UI FIX: You cannot pass delete_after to edit(). Use delay in delete() instead.
+            try: 
+                await status_msg.edit(embed=final_embed)
+                await status_msg.delete(delay=15.0)
             except: pass
             
             if wargame.get("attempts", 0) > 0 or (wargame["scams_left"] == 0 and not wargame["failed"]):
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
                 
         elif wargame and wargame.get("cancelled"):
+            # UI FIX: Forcefully delete the status message instantly if cancelled
+            try: await status_msg.delete()
+            except: pass
+
             if wargame.get("attempts", 0) > 0:
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
             if wargame.get("cancelled_reason") == "purge":
@@ -246,7 +252,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             
         active_wargames.pop(game_id, None)
 
-        # STRICT GARBAGE COLLECTION: Guarantees UI elements and ghost messages are erased.
         for msg in spawned_msgs:
             try: await msg.delete()
             except: pass
