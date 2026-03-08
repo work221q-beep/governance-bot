@@ -10,6 +10,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
+intents.members = True # 👈 CRITICAL FIX: Required for the web dashboard to fetch users
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 engine_state = {"active": True}
@@ -19,27 +20,40 @@ active_guild_sessions = set()
 startraid_abort_confirm = {} 
 abort_lock = asyncio.Lock()
 
+# NEW: Spam tracking dictionary for commands
+command_spam_tracker = {}
+
+def check_command_spam(guild_id: int) -> bool:
+    """Rate limits commands: Max 3 uses per 5 seconds per server"""
+    now = discord.utils.utcnow().timestamp()
+    if guild_id not in command_spam_tracker:
+        command_spam_tracker[guild_id] = []
+    
+    # Keep only timestamps within the last 5 seconds
+    command_spam_tracker[guild_id] = [t for t in command_spam_tracker[guild_id] if now - t < 5.0]
+    
+    if len(command_spam_tracker[guild_id]) >= 3:
+        return True
+        
+    command_spam_tracker[guild_id].append(now)
+    return False
+
 def sanitize_payload(text: str) -> str:
     text = str(text)
-    # FIX 9: Homoglyph Protection
     text = unicodedata.normalize('NFKC', text)
     
-    # Prevent all types of mentions (users, roles, everyone, here)
     text = re.sub(r'<@!?\d+>', '[REDACTED USER MENTION]', text)
     text = re.sub(r'<@&\d+>', '[REDACTED ROLE MENTION]', text)
     
-    # Catch all variations of everyone/here
     text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*v[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*y[\u200b\u200c\u200d\uFEFF]*o[\u200b\u200c\u200d\uFEFF]*n[\u200b\u200c\u200d\uFEFF]*e', '@\u200beveryone', text, flags=re.IGNORECASE)
     text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*h[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*e', '@\u200bhere', text, flags=re.IGNORECASE)
     
-    # Catch all discord invite links
     invite_pattern = r'(?:https?://)?(?:www\.)?(?:discord\.(?:gg|io|me|li|com/invite)|invite\.gg|dsc\.gg|join\.gg)/[a-zA-Z0-9_-]+'
     text = re.sub(invite_pattern, '[REDACTED INVITE]', text, flags=re.IGNORECASE)
     
     return text[:2000]
 
 def sanitize_username(text: str) -> str:
-    # FIX 4: Webhook Username rules & separation
     text = str(text)
     text = unicodedata.normalize('NFKC', text)
     text = re.sub(r'(discord|clyde|everyone|here)', '', text, flags=re.IGNORECASE)
@@ -110,7 +124,6 @@ class RaidView(discord.ui.View):
         self.add_item(RaidSelect(original_cmd_msg))
 
     async def on_timeout(self):
-        # FIX 10: msg.guild None checks
         if self.original_cmd_msg.guild and self.original_cmd_msg.guild.id in active_guild_sessions:
             active_guild_sessions.remove(self.original_cmd_msg.guild.id)
             
@@ -129,6 +142,11 @@ async def on_ready():
 @bot.tree.command(name="startraid", description="Deploy a Red Team Wargame in this channel")
 @discord.app_commands.default_permissions(administrator=True)
 async def start_raid(interaction: discord.Interaction):
+    # NEW: SPAM PREVENTION
+    if check_command_spam(interaction.guild.id):
+        await interaction.response.send_message("⚠️ **Rate Limited.** You are sending commands too quickly. Please wait a few seconds.", ephemeral=True)
+        return
+
     if not engine_state["active"]:
         await interaction.response.send_message("❌ **Engine Offline.** Contact the Bot Administrator.", ephemeral=True)
         return
@@ -153,7 +171,7 @@ async def start_raid(interaction: discord.Interaction):
                     
             to_remove = []
             for msg_id, msg in pending_dropdowns.items():
-                if msg.guild and msg.guild.id == interaction.guild.id: # FIX 10
+                if msg.guild and msg.guild.id == interaction.guild.id: 
                     to_remove.append(msg_id)
                     try: await msg.delete()
                     except: pass
@@ -200,6 +218,11 @@ async def start_raid(interaction: discord.Interaction):
 @bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
 @discord.app_commands.default_permissions(administrator=True)
 async def end_raid(interaction: discord.Interaction):
+    # NEW: SPAM PREVENTION
+    if check_command_spam(interaction.guild.id):
+        await interaction.response.send_message("⚠️ **Rate Limited.** You are sending commands too quickly. Please wait a few seconds.", ephemeral=True)
+        return
+
     if interaction.guild.id not in active_guild_sessions:
         await interaction.response.send_message("⚠️ There is no active wargame in this server to cancel.", ephemeral=True)
         return
@@ -214,7 +237,7 @@ async def end_raid(interaction: discord.Interaction):
             
     to_remove = []
     for msg_id, msg in pending_dropdowns.items():
-        if msg.guild and msg.guild.id == interaction.guild.id: # FIX 10
+        if msg.guild and msg.guild.id == interaction.guild.id: 
             to_remove.append(msg_id)
             try: await msg.delete()
             except: pass
@@ -271,11 +294,18 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         }
         
         for p in all_payloads:
+            # FIX: If the status panel is deleted mid-deployment, stop sending payloads immediately
+            wargame = active_wargames.get(game_id)
+            if not wargame or wargame.get("cancelled"):
+                break
+                
             safe_content = sanitize_payload(p["spam_message"])
-            safe_username = sanitize_username(p["username"])[:80] # FIX 4 Implementation
+            safe_username = sanitize_username(p["username"])[:80] 
             msg = await webhook.send(content=safe_content, username=safe_username, wait=True, allowed_mentions=discord.AllowedMentions.none())
             spawned_msgs.append(msg)
-            active_wargames[game_id]["msg_map"][msg.id] = p["is_malicious"]
+            
+            if wargame:
+                wargame["msg_map"][msg.id] = p["is_malicious"]
             await asyncio.sleep(0.5)
 
         for _ in range(60):
@@ -318,7 +348,8 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                     try:
                         channel = bot.get_channel(wargame["channel_id"])
                         if channel:
-                            await channel.send("🛑 **Wargame Cancelled.** Dropdown menu or status message was deleted by a moderator.", delete_after=10.0)
+                            # Clarified the message so it makes sense for both panels
+                            await channel.send("🛑 **Wargame Cancelled.** Training UI panel was deleted by a moderator.", delete_after=10.0)
                     except: pass
                 bot.loop.create_task(send_purge_msg())
             
@@ -339,7 +370,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 async def on_message_delete(message):
     if message.id in pending_dropdowns:
         original_cmd_msg = pending_dropdowns.pop(message.id)
-        if message.guild and message.guild.id in active_guild_sessions: # FIX 10
+        if message.guild and message.guild.id in active_guild_sessions: 
             active_guild_sessions.remove(message.guild.id)
             
         async def delayed_cancel():
@@ -354,6 +385,7 @@ async def on_message_delete(message):
         return
 
     for game_id, wargame in list(active_wargames.items()):
+        # Checks if either the initial dropdown OR the active status panel is deleted
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True

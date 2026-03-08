@@ -32,6 +32,17 @@ def validate_object_id(doc_id: str) -> ObjectId:
         raise HTTPException(status_code=400, detail="Invalid ID format")
     return ObjectId(doc_id)
 
+# NEW FIX: Reliable member fetching to prevent dashboard cache drop errors
+async def get_reliable_member(guild, user_id: int):
+    """Fetches a member from cache, falling back to an API call if missing."""
+    member = guild.get_member(user_id)
+    if not member:
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return None
+    return member
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -234,8 +245,10 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
         return RedirectResponse("/dashboard?error=You do not have permission to access this server.")
         
     roles, users, bots, channels = [], [], [], []
-    web_member = guild.get_member(int(session_user.get("id"))) if bot_in_guild else None
     
+    # Fetch member reliably
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if bot_in_guild else None
+
     # Re-verify permissions if bot is in guild (prevents stale session access)
     if bot_in_guild and web_member:
         if not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
@@ -319,8 +332,8 @@ async def apply_sync_post(request: Request, guild_id: str):
     if not guild: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # FIX 5: Strict Guild Permission Re-verification on POST
-    web_member = guild.get_member(int(session_user.get("id")))
+    # FIX 5: Strict Guild Permission Re-verification on POST (Reliable Fetch)
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
     
@@ -390,7 +403,7 @@ async def premium_manager(request: Request, guild_id: str):
                 user_power = "Administrator"
             break
 
-    web_member = guild.get_member(int(session_user.get("id"))) if bot_in_guild else None
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if bot_in_guild else None
     display_name = web_member.display_name if web_member else (session_user.get("global_name") or session_user.get("username"))
     user_avatar = str(web_member.display_avatar.url) if web_member and web_member.display_avatar else session_user.get("avatar")
 
@@ -412,7 +425,7 @@ async def redeem_key(request: Request, guild_id: str):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
-    web_member = guild.get_member(int(session_user.get("id"))) if guild else None
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
         
@@ -452,7 +465,7 @@ async def buy_premium(request: Request, guild_id: str):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
         
     guild = bot.get_guild(int(guild_id))
-    web_member = guild.get_member(int(session_user.get("id"))) if guild else None
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
         
@@ -570,8 +583,8 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if not target: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # FIX 5: Strict Permission verified on POST
-    web_member = guild.get_member(int(session_user.get("id")))
+    # FIX 5: Strict Permission verified on POST (Reliable Fetch)
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
@@ -649,8 +662,8 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     channel = guild.get_channel(int(channel_id))
     role = guild.get_role(int(role_id)) if role_id else guild.default_role
     
-    # FIX 5: Re-verification on POST
-    web_member = guild.get_member(int(session_user.get("id")))
+    # FIX 5: Re-verification on POST (Reliable Fetch)
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or not (web_member.guild_permissions.administrator or web_member.guild_permissions.manage_channels or guild.owner_id == web_member.id):
         raise HTTPException(status_code=403, detail="Permission denied")
 
@@ -699,7 +712,7 @@ async def create_channel(request: Request, guild_id: str):
     if not guild: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    web_member = guild.get_member(int(session_user.get("id")))
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
         
@@ -729,7 +742,7 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     if not guild: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    web_member = guild.get_member(int(session_user.get("id")))
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
         
@@ -763,7 +776,7 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     if not guild: 
         return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    web_member = guild.get_member(int(session_user.get("id")))
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id):
         return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
         
