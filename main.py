@@ -206,7 +206,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     
     from db import payments, guild_premium
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-    # Filter out pending payments older than 24h
+    # Filter out pending payments older than 24h naturally purges them from view
     guild_payments = await payments.find({
         "guild_id": str(guild_id),
         "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
@@ -390,7 +390,6 @@ async def buy_premium(request: Request, guild_id: str):
         "created_at": datetime.datetime.utcnow()
     })
 
-    # Chain2Pay API Integration
     merchant_wallet = os.getenv("MERCHANT_WALLET", "0x0000000000000000000000000000000000000000")
     base_url = os.getenv("BASE_URL", str(request.base_url).rstrip('/'))
     
@@ -405,7 +404,11 @@ async def buy_premium(request: Request, guild_id: str):
             })
             data = resp.json()
             payment_url = data.get("url") or data.get("payment_url")
+            
+            # CHAIN2PAY BUG FIX: If API returns a relative path like 'pay.php?id=xyz', wrap it
             if payment_url:
+                if not payment_url.startswith("http"):
+                    payment_url = f"https://chain2pay.cloud/{payment_url.lstrip('/')}"
                 return RedirectResponse(payment_url, status_code=303)
         except Exception as e:
             print(f"Chain2Pay API Error: {e}")
@@ -463,7 +466,6 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     tab = "bots" if target and target.bot else "users"
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
     
-    # MODERATION DM BUG FIX - Explicitly check Bot Permissions BEFORE sending DM
     bot_has_perm = False
     if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
     elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
@@ -615,13 +617,13 @@ async def admin_panel(request: Request, key: str = None):
         p["spam_message"] = decrypt_data(p.get("spam_message", ""))
         payloads.append(p)
         
-    db = payload_armory.database
-    collection_names = await db.list_collection_names()
+    db_ref = payload_armory.database
+    collection_names = await db_ref.list_collection_names()
     collection_names = [c for c in collection_names if not c.startswith("system.")]
     db_structure = {}
     
     for coll_name in collection_names:
-        docs = await db[coll_name].find().sort("_id", -1).to_list(1000)
+        docs = await db_ref[coll_name].find().sort("_id", -1).to_list(1000)
         for d in docs:
             d["_id"] = str(d["_id"])
             if coll_name == "payload_armory":
@@ -644,11 +646,13 @@ async def admin_panel(request: Request, key: str = None):
     for k in keys: k["_id"] = str(k["_id"])
     active_keys_count = sum(1 for k in keys if not k.get("used", False))
         
-    # Only show paid, or pending < 24h
+    # TOTAL PAYMENTS FIX - only count 'paid' status towards the integer. 
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     all_payments = await payments.find({
         "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]
     }).sort("created_at", -1).to_list(1000)
+    
+    paid_payments_count = sum(1 for p in all_payments if p.get("status") == "paid")
     total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
     
     from db import gift_logs
@@ -658,7 +662,7 @@ async def admin_panel(request: Request, key: str = None):
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
         "ai_status": "ONLINE", "db_structure": db_structure,
         "servers": servers, "license_keys": keys, "active_keys_count": active_keys_count,
-        "payments": all_payments, "total_revenue": total_revenue, "gift_logs": all_gifts
+        "payments": all_payments, "total_revenue": total_revenue, "paid_payments_count": paid_payments_count, "gift_logs": all_gifts
     })
 
 @app.post("/admin/toggle_bot")
@@ -697,17 +701,17 @@ async def check_admin_auth(request: Request):
 async def admin_drop_collection(request: Request, coll_name: str):
     if not await check_admin_auth(request): return RedirectResponse("/")
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
-    db = payload_armory.database
-    await db.drop_collection(coll_name)
+    db_ref = payload_armory.database
+    await db_ref.drop_collection(coll_name)
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 @app.post("/admin/db/delete_doc/{coll_name}/{doc_id}")
 async def admin_delete_doc(request: Request, coll_name: str, doc_id: str):
     if not await check_admin_auth(request): return RedirectResponse("/")
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
-    db = payload_armory.database
+    db_ref = payload_armory.database
     valid_id = validate_object_id(doc_id) 
-    await db[coll_name].delete_one({"_id": valid_id})
+    await db_ref[coll_name].delete_one({"_id": valid_id})
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 @app.post("/admin/db/edit_doc/{coll_name}/{doc_id}")
@@ -716,7 +720,7 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     form = await request.form()
     raw_json = form.get("raw_json")
-    db = payload_armory.database
+    db_ref = payload_armory.database
     valid_id = validate_object_id(doc_id) 
     
     try:
@@ -726,7 +730,7 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
             from crypto import encrypt_data
             if "username" in data: data["username"] = encrypt_data(data["username"])
             if "spam_message" in data: data["spam_message"] = encrypt_data(data["spam_message"])
-        await db[coll_name].update_one({"_id": valid_id}, {"$set": data})
+        await db_ref[coll_name].update_one({"_id": valid_id}, {"$set": data})
     except Exception as e: print(f"Error editing doc: {e}")
     return RedirectResponse("/admin?tab=db", status_code=303)
 
