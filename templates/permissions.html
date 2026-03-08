@@ -582,7 +582,7 @@
                     <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex justify-between items-center">
                         <div>
                             <p class="text-white font-mono text-lg font-black">${{ p.amount }} <span class="text-white/40 text-xs font-sans tracking-wide font-normal ml-2">{{ p.days }} Days</span></p>
-                            <p class="text-white/40 text-[10px] mt-1 font-mono">ID: {{ p.internal_order_id }} | {{ p.created_at[:10] }}</p>
+                            <p class="text-white/40 text-[10px] mt-1 font-mono">ID: {{ p.internal_order_id }} | {{ p.created_at.strftime('%Y-%m-%d') if p.created_at else 'Unknown' }}</p>
                         </div>
                         <div>
                             {% if p.status == 'paid' %}
