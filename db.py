@@ -1,24 +1,20 @@
 import os
-from pymongo import AsyncMongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
+from datetime import datetime
 
-# Using Native PyMongo Async to avoid the Motor EOL Vulnerability
-client = AsyncMongoClient(os.getenv("MONGO_URI"))
-db = client[os.getenv("MONGO_DB_NAME", "sylas_db")]
+MONGO_URI = os.getenv("MONGO_URI")
 
-payload_armory = db["payload_armory"]
-guild_premium = db["guild_premium"]
-guild_cooldowns = db["guild_cooldowns"]
-license_keys = db["license_keys"]
-payments = db["payments"]
-gift_logs = db["gift_logs"]
-sessions = db["sessions"]
-audit_logs = db["audit_logs"]
-admin_sessions = db["admin_sessions"]
+client = AsyncIOMotorClient(MONGO_URI)
+db = client.sylas_chaos 
+
+payload_armory = db.payload_armory
+guild_premium = db.guild_premium       # NEW: Tracks active subscriptions
+guild_cooldowns = db.guild_cooldowns   # NEW: Tracks wargame usage
+license_keys = db.license_keys         # NEW: Tracks premium license keys
+payments = db.payments                 # NEW: Tracks Chain2Pay payments
 
 async def init_indexes():
     await payload_armory.create_index("raid_type")
-    await sessions.create_index("session_id", unique=True)
-    await sessions.create_index("expires_at", expireAfterSeconds=0)
-    await admin_sessions.create_index("token", unique=True)
-    await admin_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await guild_premium.create_index("guild_id", unique=True)
+    await guild_cooldowns.create_index([("guild_id", 1), ("raid_type", 1)], unique=True)
     await license_keys.create_index("key", unique=True)
