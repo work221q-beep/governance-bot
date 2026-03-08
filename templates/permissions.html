@@ -196,13 +196,17 @@
 
         function closeModModal() { document.getElementById('mod-modal').classList.add('hidden'); }
 
+        // NEW UI System: Copying text elements natively
         function copyToClipboard(text, element) {
             const copy = () => {
-                const originalHTML = element.innerHTML;
-                element.innerHTML = '<svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                const originalText = element.innerText;
+                element.innerText = 'Copied!';
+                element.classList.add('text-emerald-400', 'font-bold');
+                
                 setTimeout(() => {
-                    element.innerHTML = originalHTML;
-                }, 2000);
+                    element.innerText = originalText;
+                    element.classList.remove('text-emerald-400', 'font-bold');
+                }, 1000);
             };
 
             if (navigator.clipboard && window.isSecureContext) {
@@ -254,11 +258,8 @@
         <div class="p-6 border-b border-white/5">
             <h1 class="text-3xl font-black tracking-widest text-white">SYLAS <span class="text-[#ff003c]">AI</span></h1>
             <div class="flex items-center gap-2 mt-2">
-                <p class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-flex items-center gap-2 px-3 py-1 rounded bg-white/5 shadow-inner">
+                <p onclick="copyToClipboard('{{ guild_id }}', this)" title="Click to copy ID" class="text-xs text-white uppercase tracking-widest font-mono truncate border border-white/20 inline-flex items-center gap-2 px-3 py-1 rounded bg-white/5 shadow-inner cursor-pointer hover:text-[#ff003c] hover:border-[#ff003c]/50 transition-colors select-none">
                     {{ guild_name }}
-                    <button type="button" onclick="copyToClipboard('{{ guild_id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Guild ID">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                    </button>
                 </p>
                 {% if has_premium %}
                 <span class="text-[10px] bg-gradient-to-r from-[#ff003c] to-[#7000ff] text-white px-2 py-0.5 rounded font-bold uppercase tracking-widest shadow-[0_0_10px_rgba(255,0,60,0.3)] flex items-center gap-1">
@@ -357,14 +358,11 @@
                         <div class="bg-black/40 px-6 py-4 flex justify-between items-center {% if role.can_edit %}cursor-pointer hover:bg-white/[0.02]{% endif %} select-none" {% if role.can_edit %}onclick="document.getElementById('perms-{{ role.id }}').classList.toggle('hidden')"{% endif %}>
                             <div class="flex items-center gap-4">
                                 {% if not role.is_everyone %}<span class="w-4 h-4 rounded-full shadow-inner border border-white/20" style="background-color: {{ role.color }};"></span>{% endif %}
-                                <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                                <h3 title="Click to copy Role ID" class="text-xl font-bold text-white flex items-center gap-2 cursor-pointer hover:text-[#ff003c] transition-colors" onclick="event.stopPropagation(); copyToClipboard('{{ role.id }}', this)">
                                     {{ role.name }}
-                                    <button type="button" onclick="event.stopPropagation(); copyToClipboard('{{ role.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Role ID">
-                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                    </button>
-                                    {% if role.is_everyone %}<span class="text-[10px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1 shadow-[0_0_10px_rgba(255,0,60,0.2)]">Base Layer</span>{% endif %}
-                                    {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1">Integration</span>{% endif %}
                                 </h3>
+                                {% if role.is_everyone %}<span class="text-[10px] bg-[#ff003c]/20 text-[#ff003c] border border-[#ff003c]/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1 shadow-[0_0_10px_rgba(255,0,60,0.2)]">Base Layer</span>{% endif %}
+                                {% if role.is_bot %}<span class="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-full font-bold uppercase tracking-widest ml-1">Integration</span>{% endif %}
                             </div>
                             <div class="flex items-center gap-4">
                                 {% if not role.can_edit %}
@@ -460,17 +458,11 @@
                         <div>
                             <span class="font-bold text-white text-lg block">{{ m.display_name }}</span>
                             <div class="flex flex-wrap items-center gap-2 mt-1">
-                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                <span title="Click to copy Name" onclick="copyToClipboard('{{ m.name }}', this)" class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 cursor-pointer hover:text-[#ff003c] hover:border-[#ff003c]/50 transition-all select-none">
                                     {{ m.name }}
-                                    <button type="button" onclick="copyToClipboard('{{ m.name }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Username">
-                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                    </button>
                                 </span>
-                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                <span title="Click to copy ID" onclick="copyToClipboard('{{ m.id }}', this)" class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 cursor-pointer hover:text-[#ff003c] hover:border-[#ff003c]/50 transition-all select-none">
                                     ID: {{ m.id }}
-                                    <button type="button" onclick="copyToClipboard('{{ m.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy User ID">
-                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                    </button>
                                 </span>
                                 <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5">Role: {{ m.top_role }}</span>
                             </div>
@@ -495,18 +487,12 @@
                             <div class="w-12 h-12 bg-cyan-900/30 border border-cyan-500/30 rounded-full flex items-center justify-center font-bold text-cyan-400">{{ m.name[0] }}</div>
                         {% endif %}
                         <div>
-                            <span class="font-bold text-cyan-400 text-lg flex items-center gap-2 drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]">
+                            <span title="Click to copy Name" onclick="copyToClipboard('{{ m.name }}', this)" class="font-bold text-cyan-400 text-lg flex items-center gap-2 drop-shadow-[0_0_5px_rgba(6,182,212,0.5)] cursor-pointer hover:text-white transition-colors select-none">
                                 {{ m.name }}
-                                <button type="button" onclick="copyToClipboard('{{ m.name }}', this)" class="text-cyan-400/50 hover:text-cyan-400 transition-colors" title="Copy Bot Name">
-                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                </button>
                             </span>
                             <div class="flex flex-wrap items-center gap-2 mt-1">
-                                <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 flex items-center gap-1">
+                                <span title="Click to copy ID" onclick="copyToClipboard('{{ m.id }}', this)" class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5 cursor-pointer hover:text-cyan-400 hover:border-cyan-400/50 transition-all select-none">
                                     ID: {{ m.id }}
-                                    <button type="button" onclick="copyToClipboard('{{ m.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Bot ID">
-                                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                    </button>
                                 </span>
                                 <span class="text-xs text-white/40 font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5">Role: {{ m.top_role }}</span>
                             </div>
@@ -538,10 +524,7 @@
                         {% endif %}
                         <span class="font-bold text-white text-lg truncate flex items-center gap-2">
                             {{ c.name }}
-                            <button type="button" onclick="event.stopPropagation(); copyToClipboard('{{ c.id }}', this)" class="text-white/30 hover:text-white transition-colors" title="Copy Channel ID">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                            </button>
-                        </span>
+                            </span>
                     </div>
                     <div class="flex items-center gap-3">
                         <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -726,25 +709,20 @@
             const deployBar = document.getElementById('deploy-bar');
             let hasUnsavedChanges = false;
 
-            // FIX 1: Explicitly added the closing brace for the `if` block containing the event listener
             if (rolesForm && deployBar) {
-                // Detect changes in the roles form
                 rolesForm.addEventListener('change', () => {
                     hasUnsavedChanges = true;
-                    // Show the deploy bar
                     deployBar.classList.remove('translate-y-[150%]', 'opacity-0', 'pointer-events-none');
                     deployBar.classList.add('translate-y-0', 'opacity-100');
                 });
-            } // <- This brace ensures the subsequent code executes properly
+            }
 
-            // Clear unsaved changes flag on submit so it doesn't warn
             if (rolesForm) {
                 rolesForm.addEventListener('submit', () => {
                     hasUnsavedChanges = false;
                 });
             }
 
-            // Use event delegation for the roles form to avoid re-binding issues
             document.body.addEventListener('change', (e) => {
                 if (e.target.closest('#roles-form') && e.target.type === 'checkbox') {
                     hasUnsavedChanges = true;
@@ -756,9 +734,7 @@
                 }
             });
 
-            // Auto-refresh data every 2 seconds
             setInterval(() => {
-                // Check if any role accordion is open
                 let isAnyRoleOpen = false;
                 document.querySelectorAll('[id^="perms-"]').forEach(el => {
                     if (!el.classList.contains('hidden')) {
@@ -778,9 +754,7 @@
                             const newTab = doc.getElementById(tab);
                             if (currentTab && newTab) {
                                 let skipUpdate = false;
-                                // Don't update if we are interacting with this tab
                                 if (currentTab.contains(document.activeElement)) skipUpdate = true;
-                                // Don't update roles tab if a role is open or has unsaved changes
                                 if (tab === 'roles' && (isAnyRoleOpen || hasUnsavedChanges)) skipUpdate = true;
                                 
                                 if (!skipUpdate) {
@@ -791,7 +765,6 @@
                             }
                         });
                         
-                        // Re-bind roles form listeners if roles tab was updated
                         if (!isAnyRoleOpen && !hasUnsavedChanges) {
                             const newRolesForm = document.getElementById('roles-form');
                             if (newRolesForm) {
