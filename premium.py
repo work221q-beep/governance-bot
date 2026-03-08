@@ -9,7 +9,9 @@ FREE_FEATURES = ["phishing", "spam_flood"]
 async def generate_license_key(days: int) -> str:
     """Generates a complex single-use license key valid for 24 hours."""
     alphabet = string.ascii_letters + string.digits
-    key = "SYLAS-" + "".join(secrets.choice(alphabet) for _ in range(24))
+    # Increase entropy to 32 characters and add dashes for readability
+    raw_key = "".join(secrets.choice(alphabet) for _ in range(32))
+    key = f"SYLAS-{raw_key[:8]}-{raw_key[8:16]}-{raw_key[16:24]}-{raw_key[24:]}"
     expires_at = datetime.utcnow() + timedelta(hours=24)
     await license_keys.insert_one({
         "key": key,

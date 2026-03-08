@@ -1,10 +1,14 @@
-import os, httpx, asyncio, json, re, random
+import os, httpx, asyncio, json, re, secrets
 from datetime import datetime
 from db import payload_armory
+from crypto import encrypt_data, decrypt_data
 
 # Environment Variables
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
+
+os.environ.pop("OPENROUTER_API_KEY", None)
+os.environ.pop("SAMBANOVA_API_KEY", None)
 
 # Global HTTP Client for connection pooling
 http_client = httpx.AsyncClient(timeout=60.0)
@@ -18,10 +22,31 @@ for m in MODULES: CAPS[f"innocent_{m}"] = 60
 # Track model health (15s timeout on failure)
 model_backoff = {"openrouter": 0, "sambanova": 0}
 
+class TokenBucket:
+    def __init__(self, capacity, fill_rate):
+        self.capacity = capacity
+        self.fill_rate = fill_rate
+        self.tokens = capacity
+        self.last_fill = datetime.utcnow().timestamp()
+        self.lock = asyncio.Lock()
+
+    async def consume(self, tokens=1):
+        async with self.lock:
+            now = datetime.utcnow().timestamp()
+            elapsed = now - self.last_fill
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
+            self.last_fill = now
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return True
+            return False
+
+ai_rate_limiter = TokenBucket(10, 0.5)
+
 def get_ai_prompt(raid_type: str) -> str:
-    seed = random.randint(10000, 99999)
+    seed = secrets.randbelow(90000) + 10000
     topics = ["gaming", "crypto", "nitro", "drama", "support", "giveaway", "memes", "general chat", "esports", "streaming", "art", "tech"]
-    topic = random.choice(topics)
+    topic = secrets.choice(topics)
     base_req = "Output strictly a valid JSON array of 5 objects with keys 'username' and 'spam_message'. No markdown, no conversational text. CRITICAL: Ensure every message is highly unique, creative, and completely different from previous generations. Avoid repetitive phrasing. "
     
     # Logic for specific module prompts
@@ -93,6 +118,9 @@ async def call_sambanova(prompt: str):
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
 async def harvest_payloads(raid_type: str):
+    if not await ai_rate_limiter.consume():
+        return 0
+        
     max_cap = CAPS.get(raid_type, 30)
     if await payload_armory.count_documents({"raid_type": raid_type}) >= max_cap: return 0
 
@@ -113,15 +141,17 @@ async def harvest_payloads(raid_type: str):
             return 0
 
     if raw:
-        json_match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if json_match:
+        start_idx = raw.find('[')
+        end_idx = raw.rfind(']')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            json_str = raw[start_idx:end_idx+1]
             try:
-                payloads = json.loads(json_match.group(0))
-                batch_id = f"SYLAS-GEN-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{random.randint(1000,9999)}"
+                payloads = json.loads(json_str)
+                batch_id = f"SYLAS-GEN-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.randbelow(9000)+1000}"
                 inserts = [{
-                    "payload_id": f"SYLAS-PLD-{raid_type.upper()}-{random.randint(10000,99999)}",
-                    "username": str(p["username"])[:30],
-                    "spam_message": str(p["spam_message"]),
+                    "payload_id": f"SYLAS-PLD-{raid_type.upper()}-{secrets.randbelow(90000)+10000}",
+                    "username": encrypt_data(str(p["username"])[:30]),
+                    "spam_message": encrypt_data(str(p["spam_message"])[:2000]),
                     "raid_type": raid_type,
                     "model": "hybrid_provider_pool",
                     "batch_id": batch_id,
@@ -132,7 +162,9 @@ async def harvest_payloads(raid_type: str):
                     await payload_armory.insert_many(inserts)
                     print(f"⚡ Harvester generated {len(inserts)} {raid_type} payloads.")
                     return len(inserts)
-            except: pass
+            except Exception as e:
+                print(f"🚨 Payload Parsing Error: {e} | Raw JSON: {json_str[:200]}...")
+                pass
     return 0
 
 async def parallel_harvest_sweep():
@@ -156,12 +188,18 @@ async def harvest_loop():
 
 async def get_preloaded_payloads(intensity: int, raid_type: str):
     cursor = payload_armory.aggregate([{"$match": {"raid_type": raid_type}}, {"$sample": {"size": intensity}}])
-    payloads = await cursor.to_list(length=intensity)
+    raw_payloads = await cursor.to_list(length=intensity)
+    
+    payloads = []
+    for p in raw_payloads:
+        p["username"] = decrypt_data(p.get("username", ""))
+        p["spam_message"] = decrypt_data(p.get("spam_message", ""))
+        payloads.append(p)
     
     # DB Resilience BUG 2 FIX: Pad missing elements instead of wiping the entire array
     while len(payloads) < intensity:
         payloads.append({
-            "username": f"User_{random.randint(100,999)}", 
+            "username": f"User_{secrets.randbelow(900)+100}", 
             "spam_message": f"[Fallback Payload] DB depleted for '{raid_type}'.", 
             "_id": None
         })

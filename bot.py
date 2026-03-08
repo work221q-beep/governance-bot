@@ -1,18 +1,53 @@
-import os, asyncio, discord, random
+import os, asyncio, discord, random, re, unicodedata
 from discord.ext import commands
 from ai import get_preloaded_payloads
 from db import payload_armory
 from premium import is_guild_premium, check_cooldown, set_cooldown, PREMIUM_FEATURES
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000") # Ensure this is set in your .env
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 engine_state = {"active": True}
 active_wargames = {}
 pending_dropdowns = {} 
-active_guild_sessions = set() # Guild-Level Session Lock
-startraid_abort_confirm = {} # Track /startraid double-tap
+active_guild_sessions = set() 
+startraid_abort_confirm = {} 
+abort_lock = asyncio.Lock()
+
+def sanitize_payload(text: str) -> str:
+    text = str(text)
+    # FIX 9: Homoglyph Protection
+    text = unicodedata.normalize('NFKC', text)
+    
+    # Prevent all types of mentions (users, roles, everyone, here)
+    text = re.sub(r'<@!?\d+>', '[REDACTED USER MENTION]', text)
+    text = re.sub(r'<@&\d+>', '[REDACTED ROLE MENTION]', text)
+    
+    # Catch all variations of everyone/here
+    text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*v[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*y[\u200b\u200c\u200d\uFEFF]*o[\u200b\u200c\u200d\uFEFF]*n[\u200b\u200c\u200d\uFEFF]*e', '@\u200beveryone', text, flags=re.IGNORECASE)
+    text = re.sub(r'@[\u200b\u200c\u200d\uFEFF]*h[\u200b\u200c\u200d\uFEFF]*e[\u200b\u200c\u200d\uFEFF]*r[\u200b\u200c\u200d\uFEFF]*e', '@\u200bhere', text, flags=re.IGNORECASE)
+    
+    # Catch all discord invite links
+    invite_pattern = r'(?:https?://)?(?:www\.)?(?:discord\.(?:gg|io|me|li|com/invite)|invite\.gg|dsc\.gg|join\.gg)/[a-zA-Z0-9_-]+'
+    text = re.sub(invite_pattern, '[REDACTED INVITE]', text, flags=re.IGNORECASE)
+    
+    return text[:2000]
+
+def sanitize_username(text: str) -> str:
+    # FIX 4: Webhook Username rules & separation
+    text = str(text)
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'(discord|clyde|everyone|here)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'[@#:`]', '', text)
+    text = text.strip()
+    if not text:
+        return "Sylas_Ghost"
+    return text[:80]
 
 class PremiumUpgradeView(discord.ui.View):
     def __init__(self, guild_id):
@@ -36,7 +71,6 @@ class RaidSelect(discord.ui.Select):
         selected_raid = self.values[0]
         guild_id = interaction.guild.id
         
-        # 1. PREMIUM CHECK
         is_prem = await is_guild_premium(guild_id)
         if selected_raid in PREMIUM_FEATURES and not is_prem:
             await interaction.response.send_message(
@@ -44,9 +78,8 @@ class RaidSelect(discord.ui.Select):
                 ephemeral=True, 
                 view=PremiumUpgradeView(guild_id)
             )
-            return # Stops execution, leaves dropdown intact
+            return
 
-        # 2. COOLDOWN CHECK
         allowed, time_left = await check_cooldown(guild_id, selected_raid, is_prem)
         if not allowed:
             tier_text = "4-Hour" if is_prem else "24-Hour"
@@ -65,7 +98,6 @@ class RaidSelect(discord.ui.Select):
                 )
             return
 
-        # 3. EXECUTE
         pending_dropdowns.pop(interaction.message.id, None)
         await interaction.response.edit_message(view=None) 
         await execute_wargame(interaction, selected_raid, interaction.message, self.original_cmd_msg)
@@ -78,8 +110,8 @@ class RaidView(discord.ui.View):
         self.add_item(RaidSelect(original_cmd_msg))
 
     async def on_timeout(self):
-        # Cleanup session lock on timeout
-        if self.original_cmd_msg.guild.id in active_guild_sessions:
+        # FIX 10: msg.guild None checks
+        if self.original_cmd_msg.guild and self.original_cmd_msg.guild.id in active_guild_sessions:
             active_guild_sessions.remove(self.original_cmd_msg.guild.id)
             
         if self.message and self.message.id in pending_dropdowns:
@@ -91,7 +123,7 @@ class RaidView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync() # Registers the new slash commands with Discord
+    await bot.tree.sync()
     print(f"👻 Sylas Ghost Engine is online and slash commands synced.")
 
 @bot.tree.command(name="startraid", description="Deploy a Red Team Wargame in this channel")
@@ -101,22 +133,27 @@ async def start_raid(interaction: discord.Interaction):
         await interaction.response.send_message("❌ **Engine Offline.** Contact the Bot Administrator.", ephemeral=True)
         return
 
-    # Cancel existing wargame if one is active
     if interaction.guild.id in active_guild_sessions:
         now = discord.utils.utcnow()
-        last_attempt = startraid_abort_confirm.get(interaction.guild.id)
+        should_abort = False
         
-        if last_attempt and (now - last_attempt).total_seconds() < 15:
-            startraid_abort_confirm.pop(interaction.guild.id, None)
-            
+        async with abort_lock:
+            last_attempt = startraid_abort_confirm.get(interaction.guild.id)
+            if last_attempt and (now - last_attempt).total_seconds() < 15:
+                startraid_abort_confirm.pop(interaction.guild.id, None)
+                should_abort = True
+            else:
+                startraid_abort_confirm[interaction.guild.id] = now
+                
+        if should_abort:
             for game_id, wargame in list(active_wargames.items()):
                 channel = bot.get_channel(wargame["channel_id"])
-                if channel and channel.guild.id == interaction.guild.id:
+                if channel and channel.guild and channel.guild.id == interaction.guild.id:
                     wargame["cancelled"] = True
                     
             to_remove = []
             for msg_id, msg in pending_dropdowns.items():
-                if msg.guild and msg.guild.id == interaction.guild.id:
+                if msg.guild and msg.guild.id == interaction.guild.id: # FIX 10
                     to_remove.append(msg_id)
                     try: await msg.delete()
                     except: pass
@@ -130,7 +167,6 @@ async def start_raid(interaction: discord.Interaction):
             await interaction.response.send_message("🛑 **Active wargame terminated.** Cooldown rules have been applied if attempts were made.", ephemeral=True, delete_after=10.0)
             return
         else:
-            startraid_abort_confirm[interaction.guild.id] = now
             await interaction.response.send_message("⚠️ **A wargame is already active.** Type `/startraid` again within 15 seconds to abort it, or use `/endraid`.", ephemeral=True, delete_after=15.0)
             return
 
@@ -142,7 +178,6 @@ async def start_raid(interaction: discord.Interaction):
         color=discord.Color.dark_gray()
     )
     
-    # Send message, fetch it to act as our base message for the dropdown
     await interaction.response.send_message(embed=embed)
     dropdown_msg = await interaction.original_response()
     
@@ -150,6 +185,17 @@ async def start_raid(interaction: discord.Interaction):
     await dropdown_msg.edit(view=view)
     view.message = dropdown_msg
     pending_dropdowns[dropdown_msg.id] = dropdown_msg
+    
+    async def cleanup_dropdown(msg_id):
+        await asyncio.sleep(300) 
+        if msg_id in pending_dropdowns:
+            msg = pending_dropdowns.pop(msg_id)
+            try: await msg.delete()
+            except: pass
+            if msg and hasattr(msg, 'guild') and msg.guild and msg.guild.id in active_guild_sessions:
+                active_guild_sessions.remove(msg.guild.id)
+                
+    bot.loop.create_task(cleanup_dropdown(dropdown_msg.id))
 
 @bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
 @discord.app_commands.default_permissions(administrator=True)
@@ -160,17 +206,15 @@ async def end_raid(interaction: discord.Interaction):
 
     killed_active_game = False
     
-    # 1. Kill the active wargame loop
     for game_id, wargame in list(active_wargames.items()):
         channel = bot.get_channel(wargame["channel_id"])
-        if channel and channel.guild.id == interaction.guild.id:
+        if channel and channel.guild and channel.guild.id == interaction.guild.id:
             wargame["cancelled"] = True
             killed_active_game = True
             
-    # 2. Kill pending dropdown menus
     to_remove = []
     for msg_id, msg in pending_dropdowns.items():
-        if msg.guild.id == interaction.guild.id:
+        if msg.guild and msg.guild.id == interaction.guild.id: # FIX 10
             to_remove.append(msg_id)
             try: await msg.delete()
             except: pass
@@ -178,7 +222,6 @@ async def end_raid(interaction: discord.Interaction):
     for m_id in to_remove:
         pending_dropdowns.pop(m_id, None)
 
-    # 3. Free the session lock
     if interaction.guild.id in active_guild_sessions:
         active_guild_sessions.remove(interaction.guild.id)
 
@@ -196,25 +239,21 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     spawned_msgs = []
     game_id = str(interaction.id)
     
-    # Randomized Ratio of Threats to Innocents
     scam_count = random.choice([2, 3])
     innocent_count = 5 - scam_count
     
-    # Generate Payload Mix via Database
     scams = await get_preloaded_payloads(scam_count, raid_type)
     innocents = await get_preloaded_payloads(innocent_count, f"innocent_{raid_type}")
     
     for s in scams: s["is_malicious"] = True
     for i in innocents: i["is_malicious"] = False
         
-    # BURN AFTER READING PROTOCOL
     used_ids = [doc["_id"] for doc in scams + innocents if doc.get("_id")]
     if used_ids: await payload_armory.delete_many({"_id": {"$in": used_ids}})
     
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
     
-    # Webhook Identity Rotation
     valid_names = [p["username"] for p in all_payloads if p.get("username")]
     wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
     
@@ -232,25 +271,24 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         }
         
         for p in all_payloads:
-            msg = await webhook.send(content=p["spam_message"], username=p["username"], wait=True)
+            safe_content = sanitize_payload(p["spam_message"])
+            safe_username = sanitize_username(p["username"])[:80] # FIX 4 Implementation
+            msg = await webhook.send(content=safe_content, username=safe_username, wait=True, allowed_mentions=discord.AllowedMentions.none())
             spawned_msgs.append(msg)
             active_wargames[game_id]["msg_map"][msg.id] = p["is_malicious"]
             await asyncio.sleep(0.5)
 
         for _ in range(60):
             wargame = active_wargames.get(game_id)
-            # Heartbeat Deletion Check breaks loop immediately if cancelled
             if not wargame or wargame["failed"] or wargame.get("cancelled") or wargame["scams_left"] <= 0: break
             await asyncio.sleep(1)
 
     finally:
-        # Release Session Lock
         if interaction.guild.id in active_guild_sessions:
             active_guild_sessions.remove(interaction.guild.id)
             
         wargame = active_wargames.get(game_id)
         
-        # Only process final state if it wasn't cancelled by deletion or /endraid
         if wargame and not wargame.get("cancelled"):
             final_embed = discord.Embed(title="✅ WARGAME COMPLETE")
             if wargame["failed"]:
@@ -268,11 +306,9 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             try: await status_msg.edit(embed=final_embed, delete_after=15.0)
             except: pass
             
-            # Set cooldown since the wargame completed or failed normally, but only if they attempted at least 1 deletion OR if it wasn't a timeout with 0 attempts
             if wargame.get("attempts", 0) > 0 or (wargame["scams_left"] == 0 and not wargame["failed"]):
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
         elif wargame and wargame.get("cancelled"):
-            # Set cooldown if cancelled but they attempted at least 1 deletion
             if wargame.get("attempts", 0) > 0:
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
                 
@@ -303,7 +339,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 async def on_message_delete(message):
     if message.id in pending_dropdowns:
         original_cmd_msg = pending_dropdowns.pop(message.id)
-        if message.guild.id in active_guild_sessions:
+        if message.guild and message.guild.id in active_guild_sessions: # FIX 10
             active_guild_sessions.remove(message.guild.id)
             
         async def delayed_cancel():
@@ -318,7 +354,6 @@ async def on_message_delete(message):
         return
 
     for game_id, wargame in list(active_wargames.items()):
-        # Detect Heartbeat Message Deletion
         if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True

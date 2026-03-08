@@ -8,3 +8,5 @@ python-multipart
 itsdangerous
 discord.py
 passlib[bcrypt]
+cryptography
+pydantic
