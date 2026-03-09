@@ -20,7 +20,8 @@ MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID")
 if not ADMIN_KEY or not MASTER_DISCORD_ID:
     raise RuntimeError("CRITICAL: ADMIN_KEY and MASTER_DISCORD_ID environment variables must be set.")
 
-ALLOWED_COLLECTIONS = ["payload_armory", "guild_premium", "guild_cooldowns", "license_keys", "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions"]
+# FIX: Added 'premium_gifts' to the allowed collections whitelist to enable admin purging.
+ALLOWED_COLLECTIONS = ["payload_armory", "guild_premium", "guild_cooldowns", "license_keys", "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions", "premium_gifts"]
 
 def validate_object_id(doc_id: str) -> ObjectId:
     if not re.match(r'^[a-fA-F0-9]{24}$', doc_id): raise HTTPException(status_code=400, detail="Invalid ID format")
@@ -91,7 +92,8 @@ async def login(request: Request, next_url: str = None):
     response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
 
-@app.api_route("/logout", methods=["POST"])
+# FIX: Permitted GET request method to resolve 405 Method Not Allowed error on <a> tag logouts.
+@app.api_route("/logout", methods=["GET", "POST"])
 async def logout(request: Request):
     session_id = request.cookies.get("session_id")
     if session_id: await db.sessions.delete_one({"session_id": session_id})
@@ -347,7 +349,6 @@ async def apply_sync_post(request: Request, guild_id: str):
 
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
-# CORE FIX: Centralized Verification Module to prevent race conditions.
 async def verify_and_fulfill_payment(token: str):
     from db import payments, license_keys
     from premium import generate_license_key
@@ -357,7 +358,6 @@ async def verify_and_fulfill_payment(token: str):
 
     async with httpx.AsyncClient() as client:
         try:
-            # Secure server-to-server verification
             verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json"
@@ -371,18 +371,15 @@ async def verify_and_fulfill_payment(token: str):
                 payment = await payments.find_one({"internal_order_id": trusted_order_id})
                 if not payment: return None
 
-                # Return the existing key if already verified
                 if payment["status"] == "paid":
                     return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
 
-                # Atomic lock to prevent duplicate key generation
                 update_result = await payments.update_one(
                     {"_id": payment["_id"], "status": "pending"}, 
                     {"$set": {"status": "paid"}}
                 )
                 
                 if update_result.modified_count == 1:
-                    # Generate key but DO NOT auto-redeem it. Leave it available for gifting.
                     key = await generate_license_key(payment["days"])
                     await license_keys.update_one(
                         {"key": key},
@@ -421,7 +418,6 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
                 "duration_days": latest_key_doc.get("duration_days", 0)
             }
 
-    # CORE FIX: Separate Webhook Return Logic from the Manual Success Route
     payment_return = request.query_params.get("payment_return")
     token = request.query_params.get("token")
     status = request.query_params.get("status")
@@ -433,8 +429,6 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
         if status == "5":
             payment_state = "canceled"
         elif token:
-            # Proactively verify the payment right here on the GET request 
-            # to guarantee the user gets their key even if the webhook failed or lagged.
             key_doc = await verify_and_fulfill_payment(token)
             if key_doc:
                 payment_state = "paid"
@@ -502,11 +496,8 @@ async def buy_premium(request: Request, guild_id: str):
     
     async with httpx.AsyncClient() as client:
         try:
-            # FIX: Explicit, dedicated return URL isolated from the manual `success` state
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
             
-            # Note: Paymento docs specify Webhook URLs must be set in the merchant dashboard. 
-            # We strictly adhere to the expected payload body.
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json",
@@ -566,7 +557,6 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
     token = payload.get("Token") or payload.get("token")
     order_status = payload.get("OrderStatus") or payload.get("orderStatus")
 
-    # Status Check (7 = Paid on blockchain network)
     if str(order_status) == "7" and token:
         bg_tasks.add_task(process_payment_bg, token)
         return HTMLResponse("Accepted for background processing", status_code=200)
