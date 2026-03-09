@@ -4,7 +4,6 @@
     <title>Sylas | Sylas Premium</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js" integrity="sha256-nO84r842x2ZksR/7A2A//282H+o7mEux4014Y8zIwiM=" crossorigin="anonymous"></script>
     <style> 
         body { font-family: 'Space Grotesk', sans-serif; background-color: #030305; color: #fff; overflow-x: hidden; } 
         .liquid-glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(40px); border: 1px solid rgba(255, 255, 255, 0.05); }
@@ -21,31 +20,6 @@
         .cyber-btn::before { content: ''; position: absolute; inset: 0; background: #ff003c; transform: scaleX(0); transform-origin: right; transition: transform 0.4s ease; z-index: -1; }
         .cyber-btn:hover::before { transform: scaleX(1); transform-origin: left; }
     </style>
-    <script>
-        function copyToClipboard(text, element) {
-            const originalText = element.innerText;
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(text).then(() => {
-                    element.innerText = 'Copied!';
-                    element.classList.add('text-white');
-                    setTimeout(() => { element.innerText = originalText; element.classList.remove('text-white'); }, 1000);
-                });
-            } else {
-                let textArea = document.createElement("textarea");
-                textArea.value = text;
-                textArea.style.position = "fixed"; textArea.style.opacity = "0";
-                document.body.appendChild(textArea);
-                textArea.focus(); textArea.select();
-                try {
-                    document.execCommand('copy');
-                    element.innerText = 'Copied!';
-                    element.classList.add('text-white');
-                    setTimeout(() => { element.innerText = originalText; element.classList.remove('text-white'); }, 1000);
-                } catch (err) {}
-                document.body.removeChild(textArea);
-            }
-        }
-    </script>
 </head>
 <body class="flex h-screen overflow-hidden relative">
 
@@ -94,61 +68,6 @@
 
     <main class="flex-1 overflow-y-auto p-6 relative z-10">
         <div class="max-w-6xl mx-auto">
-            
-            {% if request.query_params.get('success') == 'true' and latest_key %}
-            <div id="success-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xl transition-opacity duration-500 px-4">
-                <div class="bg-[#050508] border border-emerald-500/50 shadow-[0_0_80px_rgba(16,185,129,0.2)] rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center relative overflow-hidden">
-                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent"></div>
-                    
-                    <div class="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald-500/30 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-                        <span class="text-emerald-400 text-5xl">💎</span>
-                    </div>
-                    
-                    <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Authorization Complete.</h2>
-                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your server's defensive matrix has been fully upgraded. Below is your active license key for your records.</p>
-                    
-                    <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-emerald-500/50 transition-colors cursor-pointer" onclick="copyToClipboard('{{ latest_key.key }}', document.getElementById('key-text'))">
-                        <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Active Master Key (Auto-Redeemed)</p>
-                        <p id="key-text" class="text-emerald-400 font-mono text-xl md:text-2xl font-black tracking-widest select-none group-hover:text-white transition-colors">
-                            {{ latest_key.key }}
-                        </p>
-                        <p class="text-white/40 text-xs mt-3 font-mono">Valid Through: {{ latest_key.expires }}</p>
-                    </div>
-
-                    <button onclick="closeSuccessModal()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.4)] text-sm uppercase tracking-widest">
-                        Acknowledge and Continue
-                    </button>
-                </div>
-            </div>
-            <script>
-                function closeSuccessModal() {
-                    const overlay = document.getElementById('success-overlay');
-                    overlay.classList.add('opacity-0');
-                    setTimeout(() => overlay.style.display = 'none', 500);
-                    
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete('success');
-                    window.history.replaceState({}, document.title, url);
-                }
-
-                document.addEventListener("DOMContentLoaded", () => {
-                    var duration = 4 * 1000;
-                    var animationEnd = Date.now() + duration;
-                    var defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 101, colors: ['#10b981', '#06b6d4', '#ffffff'] };
-
-                    function randomInRange(min, max) { return Math.random() * (max - min) + min; }
-
-                    var interval = setInterval(function() {
-                        var timeLeft = animationEnd - Date.now();
-                        if (timeLeft <= 0) return clearInterval(interval);
-                        var particleCount = 60 * (timeLeft / duration);
-                        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
-                        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
-                    }, 250);
-                });
-            </script>
-            {% endif %}
-
             <header class="mb-8 flex justify-between items-end border-b border-white/10 pb-5">
                 <div>
                     <h2 class="text-3xl font-black text-white tracking-tighter">Premium Matrix</h2>
@@ -293,6 +212,16 @@
                 {% if request.query_params.get('error') %}
                 <div class="bg-red-500/10 border border-red-500/30 text-red-400 px-5 py-3 rounded-lg mb-6 text-sm font-bold">
                     {{ request.query_params.get('error') }}
+                </div>
+                {% endif %}
+                
+                {% if request.query_params.get('success') %}
+                <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-5 py-3 rounded-lg mb-6 text-sm font-bold">
+                    {% if request.query_params.get('success') == 'true' %}
+                    Payment successful! Your premium features are now active.
+                    {% else %}
+                    License key redeemed successfully! Premium features are now active.
+                    {% endif %}
                 </div>
                 {% endif %}
                 

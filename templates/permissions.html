@@ -4,7 +4,6 @@
     <title>Sylas | Role permission manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js" integrity="sha256-nO84r842x2ZksR/7A2A//282H+o7mEux4014Y8zIwiM=" crossorigin="anonymous"></script>
     <style>
         body { font-family: 'Space Grotesk', sans-serif; background-color: #030305; color: #fff; }
         .liquid-glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.05); }
@@ -331,62 +330,6 @@
 
     <main class="flex-1 overflow-y-auto p-6 relative z-10">
         <div class="max-w-6xl mx-auto">
-            
-            {% if request.query_params.get('success') == 'true' and latest_key %}
-            <div id="success-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xl transition-opacity duration-500 px-4">
-                <div class="bg-[#050508] border border-emerald-500/50 shadow-[0_0_80px_rgba(16,185,129,0.2)] rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center relative overflow-hidden">
-                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent"></div>
-                    
-                    <div class="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald-500/30 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-                        <span class="text-emerald-400 text-5xl">💎</span>
-                    </div>
-                    
-                    <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Authorization Complete.</h2>
-                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your server's defensive matrix has been fully upgraded. Below is your active license key for your records.</p>
-                    
-                    <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-emerald-500/50 transition-colors cursor-pointer" onclick="copyToClipboard('{{ latest_key.key }}', document.getElementById('key-text'))">
-                        <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Active Master Key (Auto-Redeemed)</p>
-                        <p id="key-text" class="text-emerald-400 font-mono text-xl md:text-2xl font-black tracking-widest select-none group-hover:text-white transition-colors">
-                            {{ latest_key.key }}
-                        </p>
-                        <p class="text-white/40 text-xs mt-3 font-mono">Valid Through: {{ latest_key.expires }}</p>
-                    </div>
-
-                    <button onclick="closeSuccessModal()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.4)] text-sm uppercase tracking-widest">
-                        Access Control Panel
-                    </button>
-                </div>
-            </div>
-            <script>
-                function closeSuccessModal() {
-                    const overlay = document.getElementById('success-overlay');
-                    overlay.classList.add('opacity-0');
-                    setTimeout(() => overlay.style.display = 'none', 500);
-                    
-                    // Sanitize URL to prevent data leakage and re-triggering
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete('success');
-                    window.history.replaceState({}, document.title, url);
-                }
-
-                document.addEventListener("DOMContentLoaded", () => {
-                    var duration = 4 * 1000;
-                    var animationEnd = Date.now() + duration;
-                    var defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 101, colors: ['#10b981', '#06b6d4', '#ffffff'] };
-
-                    function randomInRange(min, max) { return Math.random() * (max - min) + min; }
-
-                    var interval = setInterval(function() {
-                        var timeLeft = animationEnd - Date.now();
-                        if (timeLeft <= 0) return clearInterval(interval);
-                        var particleCount = 60 * (timeLeft / duration);
-                        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
-                        confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
-                    }, 250);
-                });
-            </script>
-            {% endif %}
-
             <header class="mb-8 flex justify-between items-end border-b border-white/10 pb-5">
                 <div>
                     <h2 id="page-title" class="text-3xl font-black text-white mb-2 tracking-tighter">Role Permission Manager</h2>
@@ -615,34 +558,19 @@
             </div>
 
             <div id="billing" class="tab-content hidden liquid-glass p-8 rounded-3xl relative z-10 max-w-4xl mx-auto">
-                <div class="flex justify-between items-center mb-8">
-                    <h3 class="text-3xl font-bold text-white tracking-tight">Subscription Hub</h3>
-                    <a href="/server/{{ guild_id }}/premium" class="bg-white/10 hover:bg-white/20 text-white font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-widest transition-all">Manage Plans</a>
-                </div>
+                <h3 class="text-3xl font-bold text-white tracking-tight mb-8">Server Subscription</h3>
                 
                 {% if has_premium and premium_expires_at %}
-                <div class="bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-emerald-500/30 rounded-2xl p-6 md:p-8 mb-10 shadow-[0_0_30px_rgba(16,185,129,0.1)] relative overflow-hidden">
-                    <div class="absolute -right-10 -top-10 text-emerald-500/20 text-9xl">💎</div>
-                    <div class="relative z-10">
-                        <span class="text-emerald-400 font-black uppercase tracking-[0.3em] text-xs mb-2 block flex items-center gap-2">
-                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Active Defense Matrix
-                        </span>
-                        <div id="premium-countdown" class="text-3xl md:text-5xl font-mono font-black text-white mb-4" data-expires="{{ premium_expires_at }}">
+                <div class="bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-emerald-500/30 rounded-2xl p-8 mb-10 flex flex-col md:flex-row justify-between items-center gap-6 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                    <div>
+                        <span class="text-emerald-400 font-black uppercase tracking-[0.3em] text-xs mb-2 block">Matrix Active</span>
+                        <div id="premium-countdown" class="text-4xl font-mono font-black text-white" data-expires="{{ premium_expires_at }}">
                             Calculating...
                         </div>
-                        
-                        {% if latest_key %}
-                        <div class="mt-6 bg-black/60 border border-emerald-500/20 rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                            <div>
-                                <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-1">Bound License Key</p>
-                                <p title="Click to copy Key" onclick="copyToClipboard('{{ latest_key.key }}', this)" class="text-emerald-400 font-mono text-sm md:text-base font-bold tracking-wider cursor-pointer hover:text-white transition-colors select-none">
-                                    {{ latest_key.key }}
-                                </p>
-                            </div>
-                            <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest shadow-inner whitespace-nowrap">Auto-Renew: Off</span>
-                        </div>
-                        {% endif %}
                     </div>
+                    <a href="/server/{{ guild_id }}/premium" class="bg-emerald-500 hover:bg-emerald-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)] text-sm uppercase tracking-widest whitespace-nowrap">
+                        Renew License
+                    </a>
                 </div>
                 <script>
                     function updateBillingCountdown() {
@@ -666,7 +594,7 @@
                         <div class="text-2xl font-bold text-white">No active subscription</div>
                     </div>
                     <a href="/server/{{ guild_id }}/premium" class="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-black px-8 py-4 rounded-xl transition-all text-sm uppercase tracking-widest whitespace-nowrap">
-                        Upgrade Matrix
+                        Upgrade
                     </a>
                 </div>
                 {% endif %}
@@ -674,7 +602,7 @@
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-sm mb-6 border-b border-white/10 pb-3">Transaction Ledger</h4>
                 <div class="space-y-4">
                     {% for p in guild_payments %}
-                    <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex justify-between items-center hover:bg-white/[0.02] transition-colors">
+                    <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex justify-between items-center">
                         <div>
                             <p class="text-white font-mono text-xl font-black">${{ p.amount }} <span class="text-white/40 text-xs font-sans tracking-wide font-normal ml-2">{{ p.days }} Days</span></p>
                             <p class="text-white/40 text-[10px] mt-1.5 font-mono">ID: {{ p.internal_order_id }} | Created: {{ p.created_at.strftime('%Y-%m-%d %H:%M UTC') if p.created_at else 'Unknown' }}</p>
@@ -695,7 +623,8 @@
                     {% endif %}
                 </div>
             </div>
-            </div>
+
+        </div>
     </main>
 
     <div id="deploy-bar" class="fixed bottom-6 left-64 right-0 max-w-4xl mx-auto w-[calc(100%-18rem)] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 flex justify-between items-center z-50 shadow-2xl transition-all duration-500 transform translate-y-[150%] opacity-0 pointer-events-none">
@@ -889,7 +818,9 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // Auto-refresh data every 2 seconds
             setInterval(() => {
+                // Check if any role accordion is open
                 let isAnyRoleOpen = false;
                 document.querySelectorAll('[id^="perms-"]').forEach(el => {
                     if (!el.classList.contains('hidden')) {
@@ -909,7 +840,9 @@
                             const newTab = doc.getElementById(tab);
                             if (currentTab && newTab) {
                                 let skipUpdate = false;
+                                // Don't update if we are interacting with this tab
                                 if (currentTab.contains(document.activeElement)) skipUpdate = true;
+                                // Don't update roles tab if a role is open or has unsaved changes
                                 if (tab === 'roles' && (isAnyRoleOpen || hasUnsavedChanges)) skipUpdate = true;
                                 
                                 if (!skipUpdate) {
@@ -920,6 +853,7 @@
                             }
                         });
                         
+                        // Re-bind roles form listeners if roles tab was updated
                         if (!isAnyRoleOpen && !hasUnsavedChanges) {
                             const newRolesForm = document.getElementById('roles-form');
                             if (newRolesForm) {
