@@ -198,7 +198,7 @@ async def redirect_to_permissions(guild_id: str):
     return RedirectResponse(f"/server/{guild_id}/permissions")
 
 @app.get("/server/{guild_id}/permissions")
-async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None):
+async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None, success: str = None):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
         
@@ -331,7 +331,7 @@ async def apply_sync_post(request: Request, guild_id: str):
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
 @app.get("/server/{guild_id}/premium")
-async def premium_manager(request: Request, guild_id: str):
+async def premium_manager(request: Request, guild_id: str, success: str = None, error: str = None):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse(f"/login?next_url={urllib.parse.quote(f'/server/{guild_id}/premium')}")
         
@@ -343,6 +343,17 @@ async def premium_manager(request: Request, guild_id: str):
     from db import guild_premium
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
+
+    # FETCH LATEST KEY TO POPULATE THE CONFETTI MODAL IN PREMIUM.HTML
+    latest_key = None
+    if success == "true":
+        from db import license_keys
+        latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
+        if latest_key_doc:
+            latest_key = {
+                "key": latest_key_doc["key"],
+                "expires": latest_key_doc["expires_at"].strftime('%Y-%m-%d')
+            }
 
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
@@ -359,7 +370,7 @@ async def premium_manager(request: Request, guild_id: str):
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
         "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar,
-        "csrf_token": csrf_token
+        "csrf_token": csrf_token, "latest_key": latest_key
     })
 
 @app.post("/server/{guild_id}/buy_premium")
@@ -401,6 +412,10 @@ async def buy_premium(request: Request, guild_id: str):
     async with httpx.AsyncClient() as client:
         try:
             print(f"[Paymento] Generating payment link for Order: {order_id}...")
+            
+            # FIXED: Set ReturnUrl to premium.html so user lands back on the exact page with modal
+            return_url = f"{base_url}/server/{guild_id}/premium?success=true"
+            
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json",
@@ -408,7 +423,7 @@ async def buy_premium(request: Request, guild_id: str):
             }, json={
                 "fiatAmount": str(amount),
                 "fiatCurrency": "USD",
-                "ReturnUrl": f"{base_url}/server/{guild_id}/premium",
+                "ReturnUrl": return_url,
                 "orderId": order_id,
                 "Speed": 1, 
                 "EmailAddress": "admin@sylas.ai"
@@ -441,8 +456,9 @@ async def paymento_webhook(request: Request):
     if not secret_key or not signature:
         return HTMLResponse("Missing Authentication", status_code=403)
         
+    # SECURITY FIX: Prevent timing attacks
     calculated_signature = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).hexdigest().upper()
-    if calculated_signature != signature.upper():
+    if not hmac.compare_digest(calculated_signature, signature.upper()):
         return HTMLResponse("Invalid HMAC Signature", status_code=403)
 
     try:
@@ -461,9 +477,10 @@ async def paymento_webhook(request: Request):
     from db import payments
     from premium import generate_license_key, redeem_license_key
     
-    payment = await payments.find_one({"internal_order_id": order_id})
-    if not payment or payment.get("status") == "paid":
-        return HTMLResponse("Ignored", status_code=200)
+    # ATOMIC FIX: Ensure we only process pending payments to prevent double-crediting
+    payment = await payments.find_one({"internal_order_id": order_id, "status": "pending"})
+    if not payment:
+        return HTMLResponse("Ignored or Already Processed", status_code=200)
 
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     async with httpx.AsyncClient() as client:
@@ -478,6 +495,7 @@ async def paymento_webhook(request: Request):
             verify_data = verify_resp.json()
             
             if verify_data.get("success"):
+                # Ensure atomic update to prevent race conditions
                 update_result = await payments.update_one(
                     {"_id": payment["_id"], "status": "pending"}, 
                     {"$set": {"status": "paid", "txid_out": str(payload.get("PaymentId", ""))}}
@@ -535,6 +553,7 @@ async def redeem_key(request: Request, guild_id: str):
 
     from premium import redeem_license_key
     success = await redeem_license_key(guild_id, key)
+    # FIXED: Direct successful redemptions to trigger the confetti popup on the same page
     if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
     else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
 
@@ -793,7 +812,13 @@ async def admin_panel(request: Request):
         
     from db import license_keys
     keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
-    for k in keys: k["_id"] = str(k["_id"])
+    for k in keys: 
+        k["_id"] = str(k["_id"])
+        if k.get("used_by_guild"):
+            guild_obj = bot.get_guild(int(k["used_by_guild"]))
+            k["guild_name"] = guild_obj.name if guild_obj else "Unknown Server"
+        else:
+            k["guild_name"] = "N/A"
     
     now_dt = datetime.datetime.utcnow()
     active_subs_count = await guild_premium.count_documents({"expires_at": {"$gt": now_dt}})
@@ -822,8 +847,10 @@ async def admin_panel(request: Request):
 async def admin_auth_post(request: Request):
     form = await request.form()
     key = form.get("key", "")
+    if not key:
+        return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
+
     from db import db
-    
     if hmac.compare_digest(key, ADMIN_KEY):
         response = RedirectResponse("/admin", status_code=303)
         token = secrets.token_urlsafe(32)
