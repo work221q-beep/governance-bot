@@ -276,8 +276,6 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
         latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
         if latest_key_doc:
             latest_key = {
-                "key": latest_key_doc["key"], 
-                "expires": latest_key_doc["expires_at"].strftime('%Y-%m-%d'),
                 "duration_days": latest_key_doc.get("duration_days", 0)
             }
 
@@ -349,6 +347,57 @@ async def apply_sync_post(request: Request, guild_id: str):
 
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
+# CORE FIX: Centralized Verification Module to prevent race conditions.
+async def verify_and_fulfill_payment(token: str):
+    from db import payments, license_keys
+    from premium import generate_license_key
+    
+    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
+    if not paymento_api_key: return None
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Secure server-to-server verification
+            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
+                "Api-key": paymento_api_key,
+                "Content-Type": "application/json"
+            }, json={"token": token})
+            
+            verify_data = verify_resp.json()
+            if verify_data.get("success") and "body" in verify_data:
+                trusted_order_id = verify_data["body"].get("orderId")
+                if not trusted_order_id: return None
+
+                payment = await payments.find_one({"internal_order_id": trusted_order_id})
+                if not payment: return None
+
+                # Return the existing key if already verified
+                if payment["status"] == "paid":
+                    return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
+
+                # Atomic lock to prevent duplicate key generation
+                update_result = await payments.update_one(
+                    {"_id": payment["_id"], "status": "pending"}, 
+                    {"$set": {"status": "paid"}}
+                )
+                
+                if update_result.modified_count == 1:
+                    # Generate key but DO NOT auto-redeem it. Leave it available for gifting.
+                    key = await generate_license_key(payment["days"])
+                    await license_keys.update_one(
+                        {"key": key},
+                        {"$set": {
+                            "used": False,
+                            "purchased_by": str(payment.get("user_id", "")),
+                            "internal_order_id": payment["internal_order_id"],
+                            "duration_days": payment["days"]
+                        }}
+                    )
+                    return await license_keys.find_one({"key": key})
+        except Exception as e:
+            print(f"Payment Verification Failed: {e}")
+    return None
+
 @app.get("/server/{guild_id}/premium")
 async def premium_manager(request: Request, guild_id: str, success: str = None, error: str = None):
     session_user, csrf_token = await get_session_user(request)
@@ -369,10 +418,32 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
         latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
         if latest_key_doc:
             latest_key = {
-                "key": latest_key_doc["key"], 
-                "expires": latest_key_doc["expires_at"].strftime('%Y-%m-%d'),
                 "duration_days": latest_key_doc.get("duration_days", 0)
             }
+
+    # CORE FIX: Separate Webhook Return Logic from the Manual Success Route
+    payment_return = request.query_params.get("payment_return")
+    token = request.query_params.get("token")
+    status = request.query_params.get("status")
+    
+    payment_state = "none"
+    generated_key = None
+
+    if payment_return == "true":
+        if status == "5":
+            payment_state = "canceled"
+        elif token:
+            # Proactively verify the payment right here on the GET request 
+            # to guarantee the user gets their key even if the webhook failed or lagged.
+            key_doc = await verify_and_fulfill_payment(token)
+            if key_doc:
+                payment_state = "paid"
+                generated_key = {
+                    "key": key_doc["key"],
+                    "duration_days": key_doc.get("duration_days", 0)
+                }
+            else:
+                payment_state = "pending"
 
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
@@ -389,7 +460,8 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
         "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar,
-        "csrf_token": csrf_token, "latest_key": latest_key, "success": success
+        "csrf_token": csrf_token, "latest_key": latest_key, "success": success,
+        "payment_state": payment_state, "generated_key": generated_key
     })
 
 @app.post("/server/{guild_id}/buy_premium")
@@ -430,7 +502,11 @@ async def buy_premium(request: Request, guild_id: str):
     
     async with httpx.AsyncClient() as client:
         try:
-            return_url = f"{base_url}/server/{guild_id}/premium?success=true"
+            # FIX: Explicit, dedicated return URL isolated from the manual `success` state
+            return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
+            
+            # Note: Paymento docs specify Webhook URLs must be set in the merchant dashboard. 
+            # We strictly adhere to the expected payload body.
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json",
@@ -461,60 +537,13 @@ async def buy_premium(request: Request, guild_id: str):
             
     return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway unavailable. Try again later.", status_code=303)
 
-async def process_payment_verification(token: str, payment_id: str):
-    """
-    Background worker to handle external API verification and DB operations.
-    Keeps the main ASGI worker free from blocking network I/O.
-    """
-    from db import payments, license_keys
-    from premium import generate_license_key, redeem_license_key
-    
-    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
-    async with httpx.AsyncClient() as client:
-        try:
-            # Securely verify token with Paymento gateway
-            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
-                "Api-key": paymento_api_key,
-                "Content-Type": "application/json"
-            }, json={"token": token})
-            
-            verify_data = verify_resp.json()
-            
-            if verify_data.get("success") and "body" in verify_data:
-                # Extract truthful orderId from the verification response
-                trusted_order_id = verify_data["body"].get("orderId")
-                if not trusted_order_id:
-                    return
-
-                payment = await payments.find_one({"internal_order_id": trusted_order_id, "status": "pending"})
-                if not payment:
-                    return
-
-                # Atomic lock update
-                update_result = await payments.update_one(
-                    {"_id": payment["_id"], "status": "pending"}, 
-                    {"$set": {"status": "paid", "txid_out": str(payment_id)}}
-                )
-                
-                if update_result.modified_count == 1:
-                    key = await generate_license_key(payment["days"])
-                    await redeem_license_key(payment["guild_id"], key)
-                    
-                    await license_keys.update_one(
-                        {"key": key},
-                        {"$set": {
-                            "used_by_user": str(payment.get("user_id", "")),
-                            "used_by_username": "Auto-Redeemed via Paymento"
-                        }}
-                    )
-        except Exception as e:
-            print(f"Background Payment Verification Failed: {e}")
+async def process_payment_bg(token: str):
+    await verify_and_fulfill_payment(token)
 
 @app.post("/api/webhook/paymento")
 async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
     raw_body = await request.body()
     
-    # Safely extract signature
     signature = (
         request.headers.get("hmac_sha256_signature") or 
         request.headers.get("x-hmac-sha256-signature") or 
@@ -525,7 +554,6 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
     if not secret_key or not signature:
         return HTMLResponse("Missing Authentication", status_code=403)
         
-    # Timing-attack safe HMAC verification
     calculated_signature = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).hexdigest().upper()
     if not hmac.compare_digest(calculated_signature, signature.upper()):
         return HTMLResponse("Invalid HMAC Signature", status_code=403)
@@ -537,21 +565,13 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
 
     token = payload.get("Token") or payload.get("token")
     order_status = payload.get("OrderStatus") or payload.get("orderStatus")
-    payment_id = payload.get("PaymentId") or payload.get("paymentId", "")
 
     # Status Check (7 = Paid on blockchain network)
-    if str(order_status) != "7":
-        return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
+    if str(order_status) == "7" and token:
+        bg_tasks.add_task(process_payment_bg, token)
+        return HTMLResponse("Accepted for background processing", status_code=200)
 
-    if not token:
-        return HTMLResponse("Missing Token", status_code=400)
-
-    # PERFORMANCE OPTIMIZATION:
-    # Offload the heavy HTTP verification request to a background task.
-    # This immediately releases the worker, dropping latency to milliseconds.
-    bg_tasks.add_task(process_payment_verification, token, payment_id)
-    
-    return HTMLResponse("Accepted for background processing", status_code=200)
+    return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
 
 @app.post("/server/{guild_id}/redeem_key")
 async def redeem_key(request: Request, guild_id: str):
