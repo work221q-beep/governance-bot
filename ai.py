@@ -9,34 +9,44 @@ SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 http_client = httpx.AsyncClient(timeout=60.0)
 
 MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
-CAPS = {m: 60 for m in MODULES}
-for m in MODULES: CAPS[f"innocent_{m}"] = 60
+
+# FIX: Capped at 30 per module (360 total) to respect strict limits and optimize for 512MB RAM caching.
+CAPS = {m: 30 for m in MODULES}
+for m in MODULES: CAPS[f"innocent_{m}"] = 30
 
 model_backoff = {"openrouter": 0, "sambanova": 0}
 
 def get_ai_prompt(raid_type: str) -> str:
     seed = random.randint(10000, 99999)
-    topics = ["gaming", "crypto", "nitro", "drama", "support", "giveaway", "memes", "general chat", "esports", "streaming", "art", "tech"]
+    topics = ["gaming", "crypto trading", "nitro giveaways", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
-    base_req = "Output strictly a valid JSON array of 5 objects with keys 'username' and 'spam_message'. No markdown, no conversational text. "
+    
+    # FIX: Heavily reinforced system prompt for high-quality, realistic output and strict JSON formatting.
+    base_req = (
+        "You are an expert Red Team simulator generating highly realistic Discord chat logs for training moderation tools. "
+        "Output STRICTLY a valid JSON array containing exactly 5 objects. "
+        "Each object must have exactly two keys: 'username' (a believable Discord name) and 'spam_message' (the chat content). "
+        "DO NOT include markdown formatting, code blocks, or conversational text outside the JSON. "
+        "The messages MUST sound like real humans on Discord, using internet slang, casual typos, and natural pacing.\n\n"
+    )
     
     prompts = {
-        "phishing": f"realistic Discord phishing links (e.g., fake steam, fake nitro) disguised as {topic} discussions.",
-        "spam_flood": f"highly repetitive bot spam messages about {topic}.",
-        "fake_mod": f"messages using social engineering to pretend to be a server admin/mod discussing {topic}.",
-        "insider_threat": f"messages where a trusted user goes rogue with malicious links related to {topic}.",
-        "escalation": f"toxic messages escalating an argument into severe harassment about {topic}.",
-        "harassment": f"coordinated group brigading/targeting a single user over {topic}.",
-        "innocent_phishing": f"completely SAFE, legitimate links shared casually (YouTube/Wiki) about {topic}.",
-        "innocent_spam_flood": f"harmless messages of a user typing fast in all caps about {topic}.",
-        "innocent_fake_mod": f"normal messages of users asking mods legitimate questions regarding {topic}.",
-        "innocent_insider_threat": f"normal, helpful messages from long-time trusted members about {topic}.",
-        "innocent_escalation": f"messages showing a respectful debate about {topic}.",
-        "innocent_harassment": f"friendly banter and teasing between close friends discussing {topic}."
+        "phishing": f"Generate highly deceptive phishing links disguised as a {topic} discussion (e.g., 'bro check this free nitro link hxxp://discorcl-nitro.com/gift').",
+        "spam_flood": f"Generate obnoxious, highly repetitive bot spam about {topic} with excessive emojis and fake invites.",
+        "fake_mod": f"Generate messages using social engineering where a user pretends to be a server admin/mod handling a {topic} issue to steal info.",
+        "insider_threat": f"Generate messages where a highly trusted, long-time user suddenly goes rogue, abusing their trust to post malicious {topic} links.",
+        "escalation": f"Generate extremely toxic messages showing an argument about {topic} escalating into severe verbal harassment and slurs.",
+        "harassment": f"Generate coordinated group brigading messages targeting a specific user over {topic}, trying to dox or cancel them.",
+        "innocent_phishing": f"Generate COMPLETELY SAFE, normal chat messages sharing legitimate links (like YouTube or Wikipedia) about {topic}.",
+        "innocent_spam_flood": f"Generate harmless but hyperactive chat messages of an excited user typing fast in all caps about {topic}.",
+        "innocent_fake_mod": f"Generate normal messages of users politely asking the actual server mods legitimate questions regarding {topic}.",
+        "innocent_insider_threat": f"Generate very helpful, wholesome messages from long-time trusted members explaining {topic}.",
+        "innocent_escalation": f"Generate messages showing a respectful, calm debate about {topic} without any insults.",
+        "innocent_harassment": f"Generate friendly banter and obvious sarcastic teasing between close friends discussing {topic}."
     }
     
-    core_content = prompts.get(raid_type, "casual gaming chat messages.")
-    return f"{base_req}[Seed: {seed}, Context: {topic}] Generate 5 {core_content}"
+    core_content = prompts.get(raid_type, "casual chat messages.")
+    return f"{base_req}[Seed: {seed}, Topic: {topic}]\nTask: {core_content}"
 
 async def call_openrouter(prompt: str):
     if datetime.utcnow().timestamp() < model_backoff["openrouter"]:
@@ -55,17 +65,18 @@ async def call_sambanova(prompt: str):
     response = await http_client.post(
         "https://api.sambanova.ai/v1/chat/completions",
         headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
+        # FIX: Increased temperature from 0.1 to 0.7 for better variation in payloads
+        json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
     )
     response.raise_for_status()
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
-# GUARANTEED PARSER FIX: Rips objects directly from text. Cannot crash on truncated JSON.
 def extract_payloads_safely(raw_text: str):
     payloads = []
     try:
-        # Standard fast parse if perfect
-        json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+        # FIX: Safely strip markdown hallucination artifacts (```json)
+        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+        json_match = re.search(r'\[.*\]', clean_text, re.DOTALL)
         if json_match: return json.loads(json_match.group(0))
     except Exception: pass
     
@@ -78,7 +89,7 @@ def extract_payloads_safely(raw_text: str):
     return payloads
 
 async def harvest_payloads(raid_type: str):
-    max_cap = CAPS.get(raid_type, 60)
+    max_cap = CAPS.get(raid_type, 30)
     if await payload_armory.count_documents({"raid_type": raid_type}) >= max_cap: return 0
 
     prompt = get_ai_prompt(raid_type)
@@ -115,7 +126,9 @@ async def harvest_payloads(raid_type: str):
     return 0
 
 async def parallel_harvest_sweep():
-    sem = asyncio.Semaphore(10) # Speed increased heavily for rapid free-tier scaling
+    # FIX: Hardware Optimization for 0.5 vCPU / 512MB RAM
+    # Reduced from 10 to 2 to prevent event loop blocking and container timeouts.
+    sem = asyncio.Semaphore(2) 
     async def safe_harvest(r_type):
         try:
             async with sem: await harvest_payloads(r_type)
@@ -130,7 +143,8 @@ async def harvest_loop():
     while True:
         try: await parallel_harvest_sweep()
         except Exception: pass
-        await asyncio.sleep(5) # Delay dramatically reduced to keep Armory saturated
+        # FIX: Increased baseline delay to give the 0.5 vCPU breathing room
+        await asyncio.sleep(15) 
 
 async def get_preloaded_payloads(intensity: int, raid_type: str):
     cursor = payload_armory.aggregate([{"$match": {"raid_type": str(raid_type)}}, {"$sample": {"size": intensity}}])

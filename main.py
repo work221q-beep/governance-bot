@@ -192,8 +192,12 @@ async def dashboard(request: Request):
     
     from db import payments, license_keys
     user_payments = await payments.find({"user_id": session_user.get("id")}).sort("created_at", -1).to_list(50)
-    user_guild_ids = [str(g["id"]) for g in session_user.get("guilds", [])]
-    user_keys = await license_keys.find({"used_by_guild": {"$in": user_guild_ids}}).sort("expires_at", -1).to_list(50)
+    
+    # FIX: Expose securely bound, unredeemed keys purchased by this user ID.
+    user_keys = await license_keys.find({
+        "purchased_by": str(session_user.get("id")),
+        "used": False
+    }).sort("_id", -1).to_list(50)
     
     for guild in session_user.get("guilds", []):
         guild["is_premium"] = await is_guild_premium(guild["id"])

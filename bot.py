@@ -230,7 +230,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                 final_embed.description = "All threats neutralized successfully without casualties. Perfect execution."
                 final_embed.color = discord.Color.green()
 
-            # UI FIX: You cannot pass delete_after to edit(). Use delay in delete() instead.
             try: 
                 await status_msg.edit(embed=final_embed)
                 await status_msg.delete(delay=15.0)
@@ -240,7 +239,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                 await set_cooldown(wargame["guild_id"], wargame["raid_type"])
                 
         elif wargame and wargame.get("cancelled"):
-            # UI FIX: Forcefully delete the status message instantly if cancelled
             try: await status_msg.delete()
             except: pass
 
@@ -263,13 +261,24 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         try: await original_cmd_msg.delete()
         except: pass
 
+# FIX: Added a robust background task wrapper to safely suppress discord.NotFound exceptions
 @bot.event
 async def on_message_delete(message):
     if message.id in pending_dropdowns:
         original_cmd_msg = pending_dropdowns.pop(message.id)
         if message.guild.id in active_guild_sessions:
             active_guild_sessions.remove(message.guild.id)
-        bot.loop.create_task(original_cmd_msg.delete())
+            
+        async def safe_delete(msg):
+            try:
+                await msg.delete()
+            except discord.NotFound:
+                # The message was already deleted before the task could run.
+                pass
+            except Exception:
+                pass
+                
+        bot.loop.create_task(safe_delete(original_cmd_msg))
         return
 
     for game_id, wargame in list(active_wargames.items()):
