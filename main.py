@@ -91,14 +91,15 @@ async def keep_awake_loop():
             print(f"[Cleanup Error] {e}")
 
 async def payment_reconciliation_loop():
-    """PERMANENT FIX: Autonomous daemon that verifies dropped webhooks natively."""
+    """Aggressive autonomous daemon that verifies dropped webhooks in the background."""
     from db import payments
     await asyncio.sleep(10)
     
     while True:
         try:
             yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            grace_period = datetime.datetime.utcnow() - datetime.timedelta(minutes=2)
+            # FAST SWEEP: Wait only 30 seconds after creation instead of 2 minutes
+            grace_period = datetime.datetime.utcnow() - datetime.timedelta(seconds=30)
             
             stuck_payments = await payments.find({
                 "status": "pending",
@@ -108,11 +109,12 @@ async def payment_reconciliation_loop():
             
             for payment in stuck_payments:
                 await verify_and_fulfill_payment(payment["paymento_token"])
-                await asyncio.sleep(2) 
+                await asyncio.sleep(1) 
         except Exception as e:
             print(f"[Reconciliation Daemon] Error: {e}")
             
-        await asyncio.sleep(60) 
+        # Run the check every 30 seconds instead of 60
+        await asyncio.sleep(30) 
 
 async def verify_and_fulfill_payment(token: str):
     from db import payments, license_keys
@@ -140,7 +142,7 @@ async def verify_and_fulfill_payment(token: str):
                 payment = await payments.find_one({"internal_order_id": trusted_order_id})
                 if not payment: return None
 
-                # Status 7 = Paid on Blockchain
+                # STRICT SECURITY: Require full 3/3 Blockchain Confirmation (Status 7)
                 if order_status == "7":
                     if payment["status"] == "paid":
                         return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
@@ -152,9 +154,9 @@ async def verify_and_fulfill_payment(token: str):
                     )
                     
                     if update_result.modified_count == 1:
-                        # 1. Mint the token
+                        # Mint the token
                         key = await generate_license_key(payment["days"])
-                        # 2. Secure it to their account
+                        # Secure it to their account
                         await license_keys.update_one(
                             {"key": key},
                             {"$set": {
@@ -173,8 +175,8 @@ async def verify_and_fulfill_payment(token: str):
                     await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
                     return None
                     
-                # Status 0, 1, 2, 3 = Pending/Confirming on Blockchain
-                # We do NOT cancel it here. We return None and let the JIT try again later.
+                # Status 0, 1, 2, 3 = STILL CONFIRMING ON BLOCKCHAIN
+                # Do NOT cancel. Return None so the aggressive background daemon keeps checking it.
                 else:
                     return None
                     
@@ -309,7 +311,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     
     await db.sessions.insert_one({ "session_id": session_id, "user": user_data, "csrf_token": csrf_token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=7) })
     
-    # NEW: Catch them the millisecond they log in
+    # Catch them the millisecond they log in
     await jit_payment_reconciliation(user_data["id"]) 
 
     response.set_cookie("session_id", session_id, httponly=True, secure=True, samesite="lax", max_age=7*24*60*60)
@@ -400,7 +402,7 @@ async def dashboard(request: Request):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     
-    # NEW: Catch them if they navigate here after closing payment gateway
+    # Catch them if they navigate here after closing payment gateway
     await jit_payment_reconciliation(session_user.get("id"))
     
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
@@ -437,7 +439,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     
-    # NEW: Catch them here
+    # Catch them here
     await jit_payment_reconciliation(session_user.get("id"))
         
     guild = bot.get_guild(int(guild_id))
@@ -588,7 +590,7 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse(f"/login?next_url={urllib.parse.quote(f'/server/{guild_id}/premium')}")
         
-    # NEW: Catch them here
+    # Catch them here
     await jit_payment_reconciliation(session_user.get("id"))
 
     guild = bot.get_guild(int(guild_id))
