@@ -27,7 +27,6 @@ def validate_object_id(doc_id: str) -> ObjectId:
     return ObjectId(doc_id)
 
 def secure_csrf_check(form_data_token: str, session_token: str) -> bool:
-    """Robust CSRF validation that prevents TypeErrors on missing data."""
     if not session_token or not form_data_token: return False
     return hmac.compare_digest(form_data_token, session_token)
 
@@ -188,17 +187,26 @@ async def dashboard(request: Request):
     if not session_user: return RedirectResponse("/login")
     
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
+    
+    from db import payments, license_keys
+    user_payments = await payments.find({"user_id": session_user.get("id")}).sort("created_at", -1).to_list(50)
+    user_guild_ids = [str(g["id"]) for g in session_user.get("guilds", [])]
+    user_keys = await license_keys.find({"used_by_guild": {"$in": user_guild_ids}}).sort("expires_at", -1).to_list(50)
+    
     for guild in session_user.get("guilds", []):
         guild["is_premium"] = await is_guild_premium(guild["id"])
         
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": session_user, "is_master": is_master})
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request, "user": session_user, "is_master": is_master,
+        "user_payments": user_payments, "user_keys": user_keys
+    })
 
 @app.get("/server/{guild_id}")
 async def redirect_to_permissions(guild_id: str):
     return RedirectResponse(f"/server/{guild_id}/permissions")
 
 @app.get("/server/{guild_id}/permissions")
-async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None, success: str = None):
+async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
         
@@ -344,16 +352,12 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
 
-    # FETCH LATEST KEY TO POPULATE THE CONFETTI MODAL IN PREMIUM.HTML
     latest_key = None
     if success == "true":
         from db import license_keys
         latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
         if latest_key_doc:
-            latest_key = {
-                "key": latest_key_doc["key"],
-                "expires": latest_key_doc["expires_at"].strftime('%Y-%m-%d')
-            }
+            latest_key = {"key": latest_key_doc["key"], "expires": latest_key_doc["expires_at"].strftime('%Y-%m-%d')}
 
     user_power = "Moderator"
     for g in session_user.get("guilds", []):
@@ -370,7 +374,7 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
         "request": request, "guild_id": guild_id, "guild_name": guild_name,
         "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar,
-        "csrf_token": csrf_token, "latest_key": latest_key
+        "csrf_token": csrf_token, "latest_key": latest_key, "success": success
     })
 
 @app.post("/server/{guild_id}/buy_premium")
@@ -411,11 +415,7 @@ async def buy_premium(request: Request, guild_id: str):
     
     async with httpx.AsyncClient() as client:
         try:
-            print(f"[Paymento] Generating payment link for Order: {order_id}...")
-            
-            # FIXED: Set ReturnUrl to premium.html so user lands back on the exact page with modal
             return_url = f"{base_url}/server/{guild_id}/premium?success=true"
-            
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json",
@@ -456,7 +456,6 @@ async def paymento_webhook(request: Request):
     if not secret_key or not signature:
         return HTMLResponse("Missing Authentication", status_code=403)
         
-    # SECURITY FIX: Prevent timing attacks
     calculated_signature = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).hexdigest().upper()
     if not hmac.compare_digest(calculated_signature, signature.upper()):
         return HTMLResponse("Invalid HMAC Signature", status_code=403)
@@ -466,18 +465,17 @@ async def paymento_webhook(request: Request):
     except json.JSONDecodeError:
         return HTMLResponse("Invalid JSON", status_code=400)
 
-    token = payload.get("Token")
-    order_status = payload.get("OrderStatus")
-    order_id = payload.get("OrderId")
+    token = payload.get("Token") or payload.get("token")
+    order_status = payload.get("OrderStatus") or payload.get("orderStatus")
+    order_id = payload.get("OrderId") or payload.get("orderId")
+    payment_id = payload.get("PaymentId") or payload.get("paymentId", "")
 
-    # Status 7 is Paid in Paymento architecture
-    if order_status != 7:
+    if str(order_status) != "7":
         return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
 
     from db import payments
     from premium import generate_license_key, redeem_license_key
     
-    # ATOMIC FIX: Ensure we only process pending payments to prevent double-crediting
     payment = await payments.find_one({"internal_order_id": order_id, "status": "pending"})
     if not payment:
         return HTMLResponse("Ignored or Already Processed", status_code=200)
@@ -485,7 +483,6 @@ async def paymento_webhook(request: Request):
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     async with httpx.AsyncClient() as client:
         try:
-            # Secondary Verification Call Required by Paymento Docs
             verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json"
@@ -495,15 +492,25 @@ async def paymento_webhook(request: Request):
             verify_data = verify_resp.json()
             
             if verify_data.get("success"):
-                # Ensure atomic update to prevent race conditions
                 update_result = await payments.update_one(
                     {"_id": payment["_id"], "status": "pending"}, 
-                    {"$set": {"status": "paid", "txid_out": str(payload.get("PaymentId", ""))}}
+                    {"$set": {"status": "paid", "txid_out": str(payment_id)}}
                 )
                 
                 if update_result.modified_count == 1:
                     key = await generate_license_key(payment["days"])
                     await redeem_license_key(payment["guild_id"], key)
+                    
+                    # LOGGING FIX: Webhook redeemer tracking
+                    from db import license_keys
+                    await license_keys.update_one(
+                        {"key": key},
+                        {"$set": {
+                            "used_by_user": str(payment.get("user_id", "")),
+                            "used_by_username": "Auto-Redeemed via Paymento"
+                        }}
+                    )
+                    
                     return HTMLResponse("OK", status_code=200)
                 else:
                     return HTMLResponse("Already Processed", status_code=200)
@@ -553,9 +560,19 @@ async def redeem_key(request: Request, guild_id: str):
 
     from premium import redeem_license_key
     success = await redeem_license_key(guild_id, key)
-    # FIXED: Direct successful redemptions to trigger the confetti popup on the same page
-    if success: return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
+    
+    if success: 
+        # LOGGING FIX: Save the Redeemer ID and Username to the Database for the Admin panel!
+        await license_keys.update_one(
+            {"key": key},
+            {"$set": {
+                "used_by_user": str(user_id),
+                "used_by_username": session_user.get("username", "Unknown")
+            }}
+        )
+        return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else: 
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
@@ -810,15 +827,22 @@ async def admin_panel(request: Request):
         cooldown_modules = [cd["raid_type"] for cd in cds]
         servers.append({ "id": str(guild.id), "name": guild.name, "member_count": guild.member_count, "is_premium": is_prem, "cooldowns": cooldown_modules })
         
+    # LOGGING FIX: Fetch the keys and inject BOTH User and Server Data for Admin template
     from db import license_keys
     keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
     for k in keys: 
         k["_id"] = str(k["_id"])
+        
         if k.get("used_by_guild"):
             guild_obj = bot.get_guild(int(k["used_by_guild"]))
             k["guild_name"] = guild_obj.name if guild_obj else "Unknown Server"
+            k["guild_id"] = str(k["used_by_guild"])
         else:
             k["guild_name"] = "N/A"
+            k["guild_id"] = None
+            
+        k["used_by_user"] = k.get("used_by_user")
+        k["used_by_username"] = k.get("used_by_username")
     
     now_dt = datetime.datetime.utcnow()
     active_subs_count = await guild_premium.count_documents({"expires_at": {"$gt": now_dt}})
