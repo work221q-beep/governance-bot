@@ -126,7 +126,6 @@
                     overlay.classList.add('opacity-0');
                     setTimeout(() => overlay.style.display = 'none', 500);
                     
-                    // Sanitize URL to prevent data leakage and re-triggering modal on page reload
                     const url = new URL(window.location.href);
                     url.searchParams.delete('success');
                     window.history.replaceState({}, document.title, url);
@@ -149,6 +148,7 @@
                 });
             </script>
             {% endif %}
+
             <header class="mb-8 flex justify-between items-end border-b border-white/10 pb-5">
                 <div>
                     <h2 class="text-3xl font-black text-white tracking-tighter">Premium Matrix</h2>
