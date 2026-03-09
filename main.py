@@ -22,6 +22,13 @@ if not ADMIN_KEY or not MASTER_DISCORD_ID:
 
 ALLOWED_COLLECTIONS = ["payload_armory", "guild_premium", "guild_cooldowns", "license_keys", "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions", "premium_gifts"]
 
+# SYSTEM MATRIX STATE
+app_state = {
+    "payments_active": True,
+    "redemption_active": True,
+    "maintenance_mode": "none" # "none", "bot", "web", "both"
+}
+
 def validate_object_id(doc_id: str) -> ObjectId:
     if not re.match(r'^[a-fA-F0-9]{24}$', doc_id): raise HTTPException(status_code=400, detail="Invalid ID format")
     return ObjectId(doc_id)
@@ -38,8 +45,23 @@ async def get_reliable_member(guild, user_id: int):
     return member
 
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def global_middleware(request: Request, call_next):
+    path = request.url.path
+    
+    # 1. Maintenance Mode Interceptor
+    if app_state["maintenance_mode"] in ["web", "both"]:
+        if not path.startswith("/admin") and not path.startswith("/api/health") and not path.startswith("/static"):
+            return HTMLResponse(
+                "<html><body style='background:#030305;color:#ff003c;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;text-align:center;'>"
+                "<h1 style='font-size:3rem;margin-bottom:10px;'>UPLINK SEVERED</h1>"
+                "<p style='color:#f4f4f5;font-size:1.2rem;opacity:0.7;'>The web matrix is currently undergoing structural maintenance. Return shortly.</p>"
+                "</body></html>", 
+                status_code=503
+            )
+            
     response = await call_next(request)
+    
+    # 2. Strict Security Headers
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -59,6 +81,38 @@ async def keep_awake_loop():
         try:
             async with httpx.AsyncClient() as client: await client.get(target_url, timeout=10.0)
         except Exception: pass
+        
+        # ACTIVE MEMORY CLEANUP: Prevents MongoDB bloat by culling dead sessions
+        try:
+            now = datetime.datetime.utcnow()
+            await db.sessions.delete_many({"expires_at": {"$lt": now}})
+            await db.admin_sessions.delete_many({"expires_at": {"$lt": now}})
+        except Exception as e: 
+            print(f"[Cleanup Error] {e}")
+
+async def payment_reconciliation_loop():
+    """PERMANENT FIX: Autonomous daemon that verifies dropped webhooks natively."""
+    from db import payments
+    await asyncio.sleep(10)
+    
+    while True:
+        try:
+            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            grace_period = datetime.datetime.utcnow() - datetime.timedelta(minutes=2)
+            
+            stuck_payments = await payments.find({
+                "status": "pending",
+                "paymento_token": {"$exists": True},
+                "created_at": {"$gt": yesterday, "$lt": grace_period}
+            }).to_list(50)
+            
+            for payment in stuck_payments:
+                await verify_and_fulfill_payment(payment["paymento_token"])
+                await asyncio.sleep(2) 
+        except Exception as e:
+            print(f"[Reconciliation Daemon] Error: {e}")
+            
+        await asyncio.sleep(60) 
 
 @app.on_event("startup")
 async def startup_event():
@@ -66,6 +120,7 @@ async def startup_event():
     asyncio.create_task(start_bot())
     asyncio.create_task(harvest_loop())
     asyncio.create_task(keep_awake_loop())
+    asyncio.create_task(payment_reconciliation_loop())
 
 @app.get("/")
 async def home(request: Request):
@@ -181,10 +236,9 @@ async def get_session_user(request: Request):
     if not session_doc: return None, None
     return session_doc["user"], session_doc.get("csrf_token")
 
-# --- Universal Redemption Endpoints ---
+# --- Universal Key Recovery Endpoints ---
 @app.post("/api/keys/acknowledge")
 async def acknowledge_key(request: Request):
-    """Marks a key as stored in inventory so the popup stops appearing."""
     session_user, _ = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
     data = await request.json()
@@ -197,7 +251,6 @@ async def acknowledge_key(request: Request):
 
 @app.post("/api/keys/mark_shown")
 async def mark_key_shown(request: Request):
-    """Tracks if the user saw the popup but closed the tab/ignored it."""
     session_user, _ = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
     data = await request.json()
@@ -210,15 +263,16 @@ async def mark_key_shown(request: Request):
 
 @app.post("/user/redeem_universal")
 async def redeem_universal(request: Request):
-    """Universal redemption handling cross-server targeting & bot checks."""
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
+    
+    if not app_state["redemption_active"]:
+        return RedirectResponse("/dashboard?error=Key redemption is temporarily disabled for maintenance.")
     
     form_data = await request.form()
     guild_id = form_data.get("guild_id")
     key = form_data.get("license_key")
     
-    # Verify Admin Permissions for target server
     is_admin = False
     for g in session_user.get("guilds", []):
         if str(g["id"]) == str(guild_id):
@@ -229,7 +283,6 @@ async def redeem_universal(request: Request):
     if not is_admin:
         return RedirectResponse("/dashboard?error=You lack admin permissions for that server.")
         
-    # Fail-Safe: Check if bot is actually in the target server
     guild = bot.get_guild(int(guild_id))
     if not guild:
         return RedirectResponse(f"/dashboard?error=Sylas AI is not in that server. You must add the bot before applying premium.&error_title=Bot Missing")
@@ -450,34 +503,44 @@ async def verify_and_fulfill_payment(token: str):
             
             verify_data = verify_resp.json()
             if verify_data.get("success") and "body" in verify_data:
-                trusted_order_id = verify_data["body"].get("orderId")
+                body_data = verify_data["body"]
+                trusted_order_id = body_data.get("orderId")
+                order_status = str(body_data.get("orderStatus", body_data.get("status", "")))
+                
                 if not trusted_order_id: return None
 
                 payment = await payments.find_one({"internal_order_id": trusted_order_id})
                 if not payment: return None
 
-                if payment["status"] == "paid":
-                    return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
+                # SECURITY FIX: State Culling. Drop any status that isn't Pending or Paid
+                if order_status not in ["1", "7"]:
+                    await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
+                    return None
 
-                update_result = await payments.update_one(
-                    {"_id": payment["_id"], "status": "pending"}, 
-                    {"$set": {"status": "paid"}}
-                )
-                
-                if update_result.modified_count == 1:
-                    key = await generate_license_key(payment["days"])
-                    await license_keys.update_one(
-                        {"key": key},
-                        {"$set": {
-                            "used": False,
-                            "purchased_by": str(payment.get("user_id", "")),
-                            "internal_order_id": payment["internal_order_id"],
-                            "duration_days": payment["days"],
-                            "acknowledged": False,
-                            "shown_count": 0
-                        }}
+                # Only fulfill if explicitly marked as Paid by the blockchain
+                if order_status == "7":
+                    if payment["status"] == "paid":
+                        return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
+
+                    update_result = await payments.update_one(
+                        {"_id": payment["_id"], "status": "pending"}, 
+                        {"$set": {"status": "paid"}}
                     )
-                    return await license_keys.find_one({"key": key})
+                    
+                    if update_result.modified_count == 1:
+                        key = await generate_license_key(payment["days"])
+                        await license_keys.update_one(
+                            {"key": key},
+                            {"$set": {
+                                "used": False,
+                                "purchased_by": str(payment.get("user_id", "")),
+                                "internal_order_id": payment["internal_order_id"],
+                                "duration_days": payment["days"],
+                                "acknowledged": False,
+                                "shown_count": 0
+                            }}
+                        )
+                        return await license_keys.find_one({"key": key})
         except Exception as e:
             print(f"Payment Verification Failed: {e}")
     return None
@@ -553,6 +616,9 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
 
 @app.post("/server/{guild_id}/buy_premium")
 async def buy_premium(request: Request, guild_id: str):
+    if not app_state["payments_active"]:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway is currently undergoing maintenance.", status_code=303)
+
     import uuid
     from db import payments
     
@@ -579,8 +645,7 @@ async def buy_premium(request: Request, guild_id: str):
     })
 
     base_url = os.getenv("BASE_URL")
-    if not base_url:
-        raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
+    if not base_url: raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
     base_url = base_url.rstrip('/')
     
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
@@ -590,6 +655,7 @@ async def buy_premium(request: Request, guild_id: str):
     async with httpx.AsyncClient() as client:
         try:
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
+            webhook_url = f"{base_url}/api/webhook/paymento" # PERMANENT FIX: Autonomous webhook verification
             
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
@@ -599,6 +665,7 @@ async def buy_premium(request: Request, guild_id: str):
                 "fiatAmount": str(amount),
                 "fiatCurrency": "USD",
                 "ReturnUrl": return_url,
+                "WebhookUrl": webhook_url, 
                 "orderId": order_id,
                 "Speed": 1, 
                 "EmailAddress": "admin@sylas.ai"
@@ -658,6 +725,9 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
 
 @app.post("/server/{guild_id}/redeem_key")
 async def redeem_key(request: Request, guild_id: str):
+    if not app_state["redemption_active"]:
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Key redemption is currently disabled for maintenance.", status_code=303)
+
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     
@@ -899,7 +969,8 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 async def admin_panel(request: Request):
     key_param = request.query_params.get("key")
     if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
-        response = RedirectResponse("/admin", status_code=303)
+        # Defaulting Admin entry strictly to Control Tab
+        response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
         from db import db
         await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
@@ -942,8 +1013,10 @@ async def admin_panel(request: Request):
     collection_names = [c for c in collection_names if not c.startswith("system.")]
     db_structure = {}
     
+    # VISUAL BUG FIX: Increased list limit to 1000 so the admin panel correctly displays 
+    # all payloads stored in the DB, rather than arbitrarily cutting off at 50.
     for coll_name in collection_names:
-        docs = await db_ref[coll_name].find().sort("_id", -1).to_list(50)
+        docs = await db_ref[coll_name].find().sort("_id", -1).to_list(1000)
         for d in docs:
             d["_id"] = str(d["_id"])
             if coll_name == "payload_armory":
@@ -994,6 +1067,7 @@ async def admin_panel(request: Request):
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
+        "app_state": app_state, # Passed global app state to the template
         "ai_status": "ONLINE", "db_structure": db_structure,
         "servers": servers, "license_keys": keys, 
         "active_keys_count": active_subs_count, "active_subs_count": active_subs_count,
@@ -1009,18 +1083,43 @@ async def admin_auth_post(request: Request):
 
     from db import db
     if hmac.compare_digest(key, ADMIN_KEY):
-        response = RedirectResponse("/admin", status_code=303)
+        # Defaulting strictly to Control Tab
+        response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
         await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
         response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
         return response
     return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
 
-@app.post("/admin/toggle_bot")
-async def toggle_bot(request: Request):
+# -------------------- MASTER CONTROL TOGGLES --------------------
+@app.post("/admin/toggle_state/{feature}")
+async def toggle_state(request: Request, feature: str):
     if not await check_admin_auth(request): return RedirectResponse("/")
-    engine_state["active"] = not engine_state["active"]
+    
+    if feature == "payments":
+        app_state["payments_active"] = not app_state["payments_active"]
+    elif feature == "redemption":
+        app_state["redemption_active"] = not app_state["redemption_active"]
+    elif feature == "bot":
+        engine_state["active"] = not engine_state["active"]
+        
     return RedirectResponse("/admin?tab=control", status_code=303)
+
+@app.post("/admin/set_maintenance")
+async def set_maintenance(request: Request):
+    if not await check_admin_auth(request): return RedirectResponse("/")
+    form = await request.form()
+    mode = form.get("mode", "none")
+    
+    if mode in ["none", "bot", "web", "both"]:
+        app_state["maintenance_mode"] = mode
+        if mode in ["bot", "both"]:
+            engine_state["active"] = False
+        else:
+            engine_state["active"] = True
+            
+    return RedirectResponse("/admin?tab=control", status_code=303)
+# -----------------------------------------------------------------
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
