@@ -42,11 +42,14 @@
                 {% endif %}
                 <span class="font-bold text-sm text-white/80">{{ user.global_name or user.username }}</span>
             </div>
-            <a href="/logout" class="text-white/40 hover:text-red-500 text-sm font-bold uppercase tracking-widest transition-colors">Disconnect</a>
+            
+            <form action="/logout" method="POST" class="inline m-0 p-0">
+                <button type="submit" class="text-white/40 hover:text-red-500 text-sm font-bold uppercase tracking-widest transition-colors bg-transparent border-none cursor-pointer">Disconnect</button>
+            </form>
         </div>
     </header>
 
-    <main class="flex-1 py-20 px-6 relative z-10 flex flex-col items-center">
+    <main class="flex-1 py-20 px-6 relative z-10 flex flex-col items-center pb-32">
         <div class="text-center mb-16 relative max-w-4xl mx-auto">
             <div class="inline-block liquid-glass px-5 py-2 rounded-full border-white/10 text-white/60 text-xs font-bold uppercase tracking-[0.2em] mb-6">
                 Active Uplink Established
@@ -73,7 +76,7 @@
             {% endif %}
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl mx-auto">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl mx-auto mb-16">
             {% for guild in user.guilds %}
             <a href="/server/{{ guild.id }}/permissions" class="cyber-card liquid-glass rounded-2xl p-6 group block relative overflow-hidden {% if guild.is_premium %}premium-card border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]{% endif %}">
                 <div class="absolute inset-0 bg-gradient-to-br {% if guild.is_premium %}from-emerald-500/5{% else %}from-[#ff003c]/5{% endif %} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
@@ -97,6 +100,70 @@
             </a>
             {% endfor %}
         </div>
+        
+        {% if user_keys %}
+        <div class="w-full max-w-6xl mx-auto pt-16 border-t border-white/10 relative z-10">
+            <h2 class="text-2xl md:text-3xl font-black mb-2 text-white tracking-tighter">Your Active License Keys</h2>
+            <p class="text-white/40 text-sm mb-8 font-mono">Unredeemed premium tokens bound to your account.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {% for key in user_keys %}
+                <div class="liquid-glass p-6 rounded-2xl border border-purple-500/30 hover:border-purple-500/80 transition-all group cursor-pointer shadow-[0_0_15px_rgba(147,51,234,0.1)] hover:shadow-[0_0_25px_rgba(147,51,234,0.3)] hover:-translate-y-1 relative overflow-hidden" onclick="copyToClipboard('{{ key.key }}', this.querySelector('.key-text'))">
+                    <div class="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    
+                    <div class="flex justify-between items-center mb-5 relative z-10">
+                        <span class="text-[10px] text-white/50 uppercase tracking-[0.2em] font-bold">Premium Token</span>
+                        <span class="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-1 rounded-full font-bold shadow-[0_0_10px_rgba(147,51,234,0.2)]">
+                            {{ key.duration_days }} Days
+                        </span>
+                    </div>
+                    
+                    <div class="font-mono text-lg text-white font-bold tracking-widest key-text transition-all duration-300 group-hover:text-purple-400 relative z-10 select-none text-center">
+                        {{ key.key }}
+                    </div>
+                    
+                    <div class="text-[10px] text-white/30 mt-5 uppercase text-center font-bold tracking-widest group-hover:text-white/60 transition-colors relative z-10 flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        Click payload to copy
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <script>
+            function copyToClipboard(text, element) {
+                const originalText = element.innerText;
+                
+                // Fallback for older browsers
+                const fallbackCopy = (t) => {
+                    const textArea = document.createElement("textarea");
+                    textArea.value = t;
+                    textArea.style.position = "fixed";
+                    document.body.appendChild(textArea);
+                    textArea.focus(); textArea.select();
+                    try { document.execCommand('copy'); } catch (err) { }
+                    document.body.removeChild(textArea);
+                };
+
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+                } else {
+                    fallbackCopy(text);
+                }
+                
+                // Visual feedback
+                element.innerText = 'COPIED TO CLIPBOARD';
+                element.classList.add('text-emerald-400', 'scale-95');
+                element.classList.remove('text-purple-400');
+                
+                setTimeout(() => { 
+                    element.innerText = originalText; 
+                    element.classList.remove('text-emerald-400', 'scale-95'); 
+                }, 1500);
+            }
+        </script>
+        {% endif %}
     </main>
 </body>
 </html>
