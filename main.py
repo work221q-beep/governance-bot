@@ -20,7 +20,6 @@ MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID")
 if not ADMIN_KEY or not MASTER_DISCORD_ID:
     raise RuntimeError("CRITICAL: ADMIN_KEY and MASTER_DISCORD_ID environment variables must be set.")
 
-# FIX: Added 'premium_gifts' to the allowed collections whitelist to enable admin purging.
 ALLOWED_COLLECTIONS = ["payload_armory", "guild_premium", "guild_cooldowns", "license_keys", "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions", "premium_gifts"]
 
 def validate_object_id(doc_id: str) -> ObjectId:
@@ -92,7 +91,6 @@ async def login(request: Request, next_url: str = None):
     response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
 
-# FIX: Permitted GET request method to resolve 405 Method Not Allowed error on <a> tag logouts.
 @app.api_route("/logout", methods=["GET", "POST"])
 async def logout(request: Request):
     session_id = request.cookies.get("session_id")
@@ -183,6 +181,77 @@ async def get_session_user(request: Request):
     if not session_doc: return None, None
     return session_doc["user"], session_doc.get("csrf_token")
 
+# --- Universal Redemption Endpoints ---
+@app.post("/api/keys/acknowledge")
+async def acknowledge_key(request: Request):
+    """Marks a key as stored in inventory so the popup stops appearing."""
+    session_user, _ = await get_session_user(request)
+    if not session_user: return HTMLResponse(status_code=401)
+    data = await request.json()
+    from db import license_keys
+    await license_keys.update_one(
+        {"key": data.get("key"), "purchased_by": str(session_user["id"])},
+        {"$set": {"acknowledged": True}}
+    )
+    return HTMLResponse("OK")
+
+@app.post("/api/keys/mark_shown")
+async def mark_key_shown(request: Request):
+    """Tracks if the user saw the popup but closed the tab/ignored it."""
+    session_user, _ = await get_session_user(request)
+    if not session_user: return HTMLResponse(status_code=401)
+    data = await request.json()
+    from db import license_keys
+    await license_keys.update_one(
+        {"key": data.get("key"), "purchased_by": str(session_user["id"])},
+        {"$inc": {"shown_count": 1}}
+    )
+    return HTMLResponse("OK")
+
+@app.post("/user/redeem_universal")
+async def redeem_universal(request: Request):
+    """Universal redemption handling cross-server targeting & bot checks."""
+    session_user, csrf_token = await get_session_user(request)
+    if not session_user: return RedirectResponse("/login")
+    
+    form_data = await request.form()
+    guild_id = form_data.get("guild_id")
+    key = form_data.get("license_key")
+    
+    # Verify Admin Permissions for target server
+    is_admin = False
+    for g in session_user.get("guilds", []):
+        if str(g["id"]) == str(guild_id):
+            if g.get("owner") or (int(g.get("permissions", 0)) & 0x8) == 0x8:
+                is_admin = True
+            break
+            
+    if not is_admin:
+        return RedirectResponse("/dashboard?error=You lack admin permissions for that server.")
+        
+    # Fail-Safe: Check if bot is actually in the target server
+    guild = bot.get_guild(int(guild_id))
+    if not guild:
+        return RedirectResponse(f"/dashboard?error=Sylas AI is not in that server. You must add the bot before applying premium.&error_title=Bot Missing")
+
+    from premium import redeem_license_key
+    from db import license_keys
+    success = await redeem_license_key(guild_id, key)
+    
+    if success: 
+        await license_keys.update_one(
+            {"key": key},
+            {"$set": {
+                "used_by_user": str(session_user.get("id")),
+                "used_by_username": session_user.get("username", "Unknown"),
+                "acknowledged": True
+            }}
+        )
+        return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else: 
+        return RedirectResponse("/dashboard?error=Key is invalid or already consumed.", status_code=303)
+# --------------------------------------
+
 @app.get("/dashboard")
 async def dashboard(request: Request):
     session_user, csrf_token = await get_session_user(request)
@@ -193,18 +262,24 @@ async def dashboard(request: Request):
     from db import payments, license_keys
     user_payments = await payments.find({"user_id": session_user.get("id")}).sort("created_at", -1).to_list(50)
     
-    # FIX: Expose securely bound, unredeemed keys purchased by this user ID.
     user_keys = await license_keys.find({
         "purchased_by": str(session_user.get("id")),
         "used": False
     }).sort("_id", -1).to_list(50)
+    
+    unacknowledged_key = await license_keys.find_one({
+        "purchased_by": str(session_user.get("id")), 
+        "used": False, 
+        "acknowledged": False
+    })
     
     for guild in session_user.get("guilds", []):
         guild["is_premium"] = await is_guild_premium(guild["id"])
         
     return templates.TemplateResponse("dashboard.html", {
         "request": request, "user": session_user, "is_master": is_master,
-        "user_payments": user_payments, "user_keys": user_keys
+        "user_payments": user_payments, "user_keys": user_keys,
+        "unacknowledged_key": unacknowledged_key, "csrf_token": csrf_token
     })
 
 @app.get("/server/{guild_id}")
@@ -239,7 +314,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     display_name = web_member.display_name if web_member else (session_user.get("global_name") or session_user.get("username"))
     user_avatar = str(web_member.display_avatar.url) if web_member and web_member.display_avatar else session_user.get("avatar")
     
-    from db import payments, guild_premium
+    from db import payments, guild_premium, license_keys
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     guild_payments = await payments.find({
         "guild_id": str(guild_id),
@@ -248,6 +323,12 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
+    
+    unacknowledged_key = await license_keys.find_one({
+        "purchased_by": str(session_user.get("id")), 
+        "used": False, 
+        "acknowledged": False
+    })
     
     if bot_in_guild:
         for r in reversed(guild.roles):
@@ -278,7 +359,6 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
 
     latest_key = None
     if request.query_params.get('success') == "true":
-        from db import license_keys
         latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
         if latest_key_doc:
             latest_key = {
@@ -293,7 +373,8 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
         "display_name": display_name, "user_avatar": user_avatar,
         "guild_payments": guild_payments, "premium_expires_at": premium_expires_at,
         "active_tab": tab, "error": error, "error_title": error_title,
-        "csrf_token": csrf_token, "latest_key": latest_key
+        "csrf_token": csrf_token, "latest_key": latest_key,
+        "unacknowledged_key": unacknowledged_key
     })
 
 @app.get("/server/{guild_id}/sync")
@@ -391,7 +472,9 @@ async def verify_and_fulfill_payment(token: str):
                             "used": False,
                             "purchased_by": str(payment.get("user_id", "")),
                             "internal_order_id": payment["internal_order_id"],
-                            "duration_days": payment["days"]
+                            "duration_days": payment["days"],
+                            "acknowledged": False,
+                            "shown_count": 0
                         }}
                     )
                     return await license_keys.find_one({"key": key})
@@ -409,13 +492,18 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
 
     has_premium = await is_guild_premium(int(guild_id))
-    from db import guild_premium
+    from db import guild_premium, license_keys
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     premium_expires_at = prem_doc["expires_at"].isoformat() if prem_doc and "expires_at" in prem_doc else None
 
+    unacknowledged_key = await license_keys.find_one({
+        "purchased_by": str(session_user.get("id")), 
+        "used": False, 
+        "acknowledged": False
+    })
+
     latest_key = None
     if success == "true":
-        from db import license_keys
         latest_key_doc = await license_keys.find_one({"used_by_guild": str(guild_id), "used": True}, sort=[("expires_at", -1)])
         if latest_key_doc:
             latest_key = {
@@ -459,7 +547,8 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
         "user": session_user, "has_premium": has_premium, "premium_expires_at": premium_expires_at,
         "user_power": user_power, "display_name": display_name, "user_avatar": user_avatar,
         "csrf_token": csrf_token, "latest_key": latest_key, "success": success,
-        "payment_state": payment_state, "generated_key": generated_key
+        "payment_state": payment_state, "generated_key": generated_key,
+        "unacknowledged_key": unacknowledged_key
     })
 
 @app.post("/server/{guild_id}/buy_premium")
@@ -611,7 +700,8 @@ async def redeem_key(request: Request, guild_id: str):
             {"key": key},
             {"$set": {
                 "used_by_user": str(user_id),
-                "used_by_username": session_user.get("username", "Unknown")
+                "used_by_username": session_user.get("username", "Unknown"),
+                "acknowledged": True
             }}
         )
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
