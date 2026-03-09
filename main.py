@@ -140,11 +140,6 @@ async def verify_and_fulfill_payment(token: str):
                 payment = await payments.find_one({"internal_order_id": trusted_order_id})
                 if not payment: return None
 
-                # Drop canceled/failed statuses immediately
-                if order_status not in ["1", "7"]:
-                    await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
-                    return None
-
                 # Status 7 = Paid on Blockchain
                 if order_status == "7":
                     if payment["status"] == "paid":
@@ -157,7 +152,9 @@ async def verify_and_fulfill_payment(token: str):
                     )
                     
                     if update_result.modified_count == 1:
+                        # 1. Mint the token
                         key = await generate_license_key(payment["days"])
+                        # 2. Secure it to their account
                         await license_keys.update_one(
                             {"key": key},
                             {"$set": {
@@ -170,6 +167,17 @@ async def verify_and_fulfill_payment(token: str):
                             }}
                         )
                         return await license_keys.find_one({"key": key})
+                        
+                # Status 5 = Explicitly Canceled / Expired by gateway
+                elif order_status == "5":
+                    await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
+                    return None
+                    
+                # Status 0, 1, 2, 3 = Pending/Confirming on Blockchain
+                # We do NOT cancel it here. We return None and let the JIT try again later.
+                else:
+                    return None
+                    
         except httpx.TimeoutException:
             # Silent fail on timeout; background daemon will retry it safely
             pass
