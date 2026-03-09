@@ -342,14 +342,13 @@
                     </div>
                     
                     <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Authorization Complete.</h2>
-                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your server's defensive matrix has been fully upgraded. Below is your active license key for your records.</p>
+                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your server's defensive matrix has been fully upgraded. Below is the duration of your premium upgrade.</p>
                     
-                    <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-emerald-500/50 transition-colors cursor-pointer" onclick="copyToClipboard('{{ latest_key.key }}', document.getElementById('key-text'))">
-                        <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Active Master Key (Auto-Redeemed)</p>
-                        <p id="key-text" class="text-emerald-400 font-mono text-xl md:text-2xl font-black tracking-widest select-none group-hover:text-white transition-colors">
-                            {{ latest_key.key }}
+                    <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-emerald-500/50 transition-colors">
+                        <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Premium Matrix Duration (Redeemed)</p>
+                        <p class="text-emerald-400 font-mono text-xl md:text-2xl font-black tracking-widest select-none group-hover:text-white transition-colors">
+                            {{ latest_key.duration_days }} Days
                         </p>
-                        <p class="text-white/40 text-xs mt-3 font-mono">Valid Through: {{ latest_key.expires }}</p>
                     </div>
 
                     <button onclick="closeSuccessModal()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.4)] text-sm uppercase tracking-widest">
