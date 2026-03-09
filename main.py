@@ -114,6 +114,81 @@ async def payment_reconciliation_loop():
             
         await asyncio.sleep(60) 
 
+async def verify_and_fulfill_payment(token: str):
+    from db import payments, license_keys
+    from premium import generate_license_key
+    
+    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
+    if not paymento_api_key: return None
+
+    # VITAL: 3.0 second timeout to protect your 512MB RAM
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        try:
+            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
+                "Api-key": paymento_api_key,
+                "Content-Type": "application/json"
+            }, json={"token": token})
+            
+            verify_data = verify_resp.json()
+            if verify_data.get("success") and "body" in verify_data:
+                body_data = verify_data["body"]
+                trusted_order_id = body_data.get("orderId")
+                order_status = str(body_data.get("orderStatus", body_data.get("status", "")))
+                
+                if not trusted_order_id: return None
+
+                payment = await payments.find_one({"internal_order_id": trusted_order_id})
+                if not payment: return None
+
+                # Drop canceled/failed statuses immediately
+                if order_status not in ["1", "7"]:
+                    await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
+                    return None
+
+                # Status 7 = Paid on Blockchain
+                if order_status == "7":
+                    if payment["status"] == "paid":
+                        return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
+
+                    # ATOMIC LOCK: Prevents double-spending
+                    update_result = await payments.update_one(
+                        {"_id": payment["_id"], "status": "pending"}, 
+                        {"$set": {"status": "paid"}}
+                    )
+                    
+                    if update_result.modified_count == 1:
+                        key = await generate_license_key(payment["days"])
+                        await license_keys.update_one(
+                            {"key": key},
+                            {"$set": {
+                                "used": False,
+                                "purchased_by": str(payment.get("user_id", "")),
+                                "internal_order_id": payment["internal_order_id"],
+                                "duration_days": payment["days"],
+                                "acknowledged": False, # Triggers your popup
+                                "shown_count": 0
+                            }}
+                        )
+                        return await license_keys.find_one({"key": key})
+        except httpx.TimeoutException:
+            # Silent fail on timeout; background daemon will retry it safely
+            pass
+        except Exception as e:
+            print(f"Payment Verification Failed: {e}")
+    return None
+
+async def jit_payment_reconciliation(user_id: str):
+    """Instantly intercepts and verifies abandoned payments on page load."""
+    from db import payments
+    pending = await payments.find({
+        "user_id": user_id,
+        "status": "pending",
+        "paymento_token": {"$exists": True}
+    }).to_list(5) # Cap at 5 to prevent memory spikes on Render
+    
+    for p in pending:
+        await verify_and_fulfill_payment(p["paymento_token"])
+
 @app.on_event("startup")
 async def startup_event():
     await init_indexes()
@@ -225,6 +300,10 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     user_data = { "id": user["id"], "username": user["username"], "global_name": user.get("global_name"), "avatar": avatar_url, "guilds": manageable_guilds }
     
     await db.sessions.insert_one({ "session_id": session_id, "user": user_data, "csrf_token": csrf_token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=7) })
+    
+    # NEW: Catch them the millisecond they log in
+    await jit_payment_reconciliation(user_data["id"]) 
+
     response.set_cookie("session_id", session_id, httponly=True, secure=True, samesite="lax", max_age=7*24*60*60)
     response.delete_cookie("oauth_state", path="/")
     return response
@@ -285,7 +364,10 @@ async def redeem_universal(request: Request):
         
     guild = bot.get_guild(int(guild_id))
     if not guild:
-        return RedirectResponse(f"/dashboard?error=Sylas AI is not in that server. You must add the bot before applying premium.&error_title=Bot Missing")
+        # Redirect back to the exact page they were on, triggering the fail-safe UI
+        referer = request.headers.get("referer", "/dashboard")
+        sep = "&" if "?" in referer else "?"
+        return RedirectResponse(f"{referer}{sep}bot_missing_guild={guild_id}", status_code=303)
 
     from premium import redeem_license_key
     from db import license_keys
@@ -309,6 +391,9 @@ async def redeem_universal(request: Request):
 async def dashboard(request: Request):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
+    
+    # NEW: Catch them if they navigate here after closing payment gateway
+    await jit_payment_reconciliation(session_user.get("id"))
     
     is_master = str(session_user.get("id")) == str(MASTER_DISCORD_ID)
     
@@ -343,6 +428,9 @@ async def redirect_to_permissions(guild_id: str):
 async def permissions_manager(request: Request, guild_id: str, tab: str = "roles", error: str = None, error_title: str = None):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
+    
+    # NEW: Catch them here
+    await jit_payment_reconciliation(session_user.get("id"))
         
     guild = bot.get_guild(int(guild_id))
     bot_in_guild = True if guild else False
@@ -487,69 +575,14 @@ async def apply_sync_post(request: Request, guild_id: str):
 
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
-async def verify_and_fulfill_payment(token: str):
-    from db import payments, license_keys
-    from premium import generate_license_key
-    
-    paymento_api_key = os.getenv("PAYMENTO_API_KEY")
-    if not paymento_api_key: return None
-
-    async with httpx.AsyncClient() as client:
-        try:
-            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
-                "Api-key": paymento_api_key,
-                "Content-Type": "application/json"
-            }, json={"token": token})
-            
-            verify_data = verify_resp.json()
-            if verify_data.get("success") and "body" in verify_data:
-                body_data = verify_data["body"]
-                trusted_order_id = body_data.get("orderId")
-                order_status = str(body_data.get("orderStatus", body_data.get("status", "")))
-                
-                if not trusted_order_id: return None
-
-                payment = await payments.find_one({"internal_order_id": trusted_order_id})
-                if not payment: return None
-
-                # SECURITY FIX: State Culling. Drop any status that isn't Pending or Paid
-                if order_status not in ["1", "7"]:
-                    await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
-                    return None
-
-                # Only fulfill if explicitly marked as Paid by the blockchain
-                if order_status == "7":
-                    if payment["status"] == "paid":
-                        return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
-
-                    update_result = await payments.update_one(
-                        {"_id": payment["_id"], "status": "pending"}, 
-                        {"$set": {"status": "paid"}}
-                    )
-                    
-                    if update_result.modified_count == 1:
-                        key = await generate_license_key(payment["days"])
-                        await license_keys.update_one(
-                            {"key": key},
-                            {"$set": {
-                                "used": False,
-                                "purchased_by": str(payment.get("user_id", "")),
-                                "internal_order_id": payment["internal_order_id"],
-                                "duration_days": payment["days"],
-                                "acknowledged": False,
-                                "shown_count": 0
-                            }}
-                        )
-                        return await license_keys.find_one({"key": key})
-        except Exception as e:
-            print(f"Payment Verification Failed: {e}")
-    return None
-
 @app.get("/server/{guild_id}/premium")
 async def premium_manager(request: Request, guild_id: str, success: str = None, error: str = None):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse(f"/login?next_url={urllib.parse.quote(f'/server/{guild_id}/premium')}")
         
+    # NEW: Catch them here
+    await jit_payment_reconciliation(session_user.get("id"))
+
     guild = bot.get_guild(int(guild_id))
     bot_in_guild = True if guild else False
     guild_name = guild.name if bot_in_guild else next((g["name"] for g in session_user.get("guilds", []) if str(g["id"]) == str(guild_id)), "Unknown Server")
@@ -655,7 +688,7 @@ async def buy_premium(request: Request, guild_id: str):
     async with httpx.AsyncClient() as client:
         try:
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
-            webhook_url = f"{base_url}/api/webhook/paymento" # PERMANENT FIX: Autonomous webhook verification
+            webhook_url = f"{base_url}/api/webhook/paymento" 
             
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
@@ -745,8 +778,11 @@ async def redeem_key(request: Request, guild_id: str):
     now = time.time()
     user_id = session_user.get("id")
     
-    if len(app.state.redeem_rl) > 5000:
-        app.state.redeem_rl.clear()
+    # NEW FIX: Proper Garbage Collection.
+    # Wipes old entries rather than arbitrarily wiping the entire dictionary, ensuring no memory leak
+    # and patching the exploit where 1000 users could instantly bypass the limiter.
+    if len(app.state.redeem_rl) > 1000:
+        app.state.redeem_rl = {k: v for k, v in app.state.redeem_rl.items() if now - v < 5}
     
     last_attempt = app.state.redeem_rl.get(user_id, 0)
     if now - last_attempt < 5:
@@ -969,7 +1005,6 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 async def admin_panel(request: Request):
     key_param = request.query_params.get("key")
     if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
-        # Defaulting Admin entry strictly to Control Tab
         response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
         from db import db
@@ -1013,8 +1048,6 @@ async def admin_panel(request: Request):
     collection_names = [c for c in collection_names if not c.startswith("system.")]
     db_structure = {}
     
-    # VISUAL BUG FIX: Increased list limit to 1000 so the admin panel correctly displays 
-    # all payloads stored in the DB, rather than arbitrarily cutting off at 50.
     for coll_name in collection_names:
         docs = await db_ref[coll_name].find().sort("_id", -1).to_list(1000)
         for d in docs:
@@ -1067,7 +1100,7 @@ async def admin_panel(request: Request):
         
     return templates.TemplateResponse("admin.html", {
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], 
-        "app_state": app_state, # Passed global app state to the template
+        "app_state": app_state, 
         "ai_status": "ONLINE", "db_structure": db_structure,
         "servers": servers, "license_keys": keys, 
         "active_keys_count": active_subs_count, "active_subs_count": active_subs_count,
@@ -1083,7 +1116,6 @@ async def admin_auth_post(request: Request):
 
     from db import db
     if hmac.compare_digest(key, ADMIN_KEY):
-        # Defaulting strictly to Control Tab
         response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
         await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
