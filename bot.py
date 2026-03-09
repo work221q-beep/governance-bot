@@ -262,40 +262,53 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         try: await original_cmd_msg.delete()
         except: pass
 
+# RAW EVENT LISTENER: Bypasses Discord's internal cache limits to guarantee interception
 @bot.event
-async def on_message_delete(message):
-    if message.id in pending_dropdowns:
-        meta = pending_dropdowns.pop(message.id)
+async def on_raw_message_delete(payload):
+    message_id = payload.message_id
+
+    # --- UI DELETION NOTIFICATION FIX ---
+    if message_id in pending_dropdowns:
+        meta = pending_dropdowns.pop(message_id)
         if meta["guild_id"] in active_guild_sessions:
             active_guild_sessions.remove(meta["guild_id"])
+            
+        try:
+            channel = bot.get_channel(meta["channel_id"])
+            if channel:
+                await channel.send("🛑 **Deployment Aborted.** Selection interface was destroyed.", delete_after=10.0)
+        except Exception as e: 
+            print(f"Failed to send abort msg: {e}")
         return
+    # ------------------------------------
 
     for game_id, wargame in list(active_wargames.items()):
-        if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
+        if message_id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True
                 wargame["cancelled_reason"] = "purge"
             continue
 
-        if message.id in wargame["msg_map"]:
+        if message_id in wargame["msg_map"]:
             wargame["attempts"] += 1
-            is_malicious = wargame["msg_map"][message.id]
+            is_malicious = wargame["msg_map"][message_id]
             time_alive = (discord.utils.utcnow() - wargame["start_time"]).total_seconds()
             
             try:
                 channel = bot.get_channel(wargame["channel_id"])
-                status_msg = await channel.fetch_message(wargame["status_msg_id"])
-                embed = status_msg.embeds[0]
-                
-                if not is_malicious:
-                    wargame["failed"] = True
-                    embed.color = discord.Color.red()
-                    embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted a contextual false positive at **{time_alive:.1f}s**!", inline=False)
-                else:
-                    wargame["scams_left"] -= 1
-                    embed.add_field(name="🛡️ Threat Neutralized", value=f"Payload deleted in **{time_alive:.1f}s**.", inline=False)
-                
-                await status_msg.edit(embed=embed)
+                if channel:
+                    status_msg = await channel.fetch_message(wargame["status_msg_id"])
+                    embed = status_msg.embeds[0]
+                    
+                    if not is_malicious:
+                        wargame["failed"] = True
+                        embed.color = discord.Color.red()
+                        embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted a contextual false positive at **{time_alive:.1f}s**!", inline=False)
+                    else:
+                        wargame["scams_left"] -= 1
+                        embed.add_field(name="🛡️ Threat Neutralized", value=f"Payload deleted in **{time_alive:.1f}s**.", inline=False)
+                    
+                    await status_msg.edit(embed=embed)
             except Exception: pass
 
 async def start_bot():
