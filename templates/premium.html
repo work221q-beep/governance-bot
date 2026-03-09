@@ -148,6 +148,92 @@
             </script>
             {% endif %}
 
+
+            {% if payment_state != 'none' %}
+            <div id="payment-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xl transition-opacity duration-500 px-4">
+                
+                {% if payment_state == 'paid' and generated_key %}
+                <div class="bg-[#050508] border border-purple-500/50 shadow-[0_0_80px_rgba(168,85,247,0.2)] rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center relative overflow-hidden">
+                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent"></div>
+                    
+                    <div class="w-24 h-24 bg-purple-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-purple-500/30 shadow-[0_0_30px_rgba(168,85,247,0.2)]">
+                        <span class="text-purple-400 text-5xl">🎁</span>
+                    </div>
+                    
+                    <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Transaction Verified.</h2>
+                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your <strong class="text-purple-400">{{ generated_key.duration_days }}-Day</strong> premium matrix has been secured. Choose your deployment method.</p>
+                    
+                    <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-purple-500/50 transition-colors">
+                        <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Unclaimed Gift Key</p>
+                        <p id="gift-key-text" class="text-purple-400 font-mono text-lg md:text-xl font-black tracking-widest select-none group-hover:text-white transition-colors">
+                            {{ generated_key.key }}
+                        </p>
+                        <p class="text-purple-400/50 text-[10px] mt-2 uppercase tracking-widest">Self-Destructs in 24 Hours</p>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-4 w-full">
+                        <form method="post" action="/server/{{ guild_id }}/redeem_key" class="w-full sm:w-1/2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="license_key" value="{{ generated_key.key }}">
+                            <button type="submit" class="w-full h-full bg-emerald-500 hover:bg-emerald-400 text-black font-black px-4 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.4)] text-xs uppercase tracking-widest">
+                                Redeem on Server
+                            </button>
+                        </form>
+                        <button type="button" onclick="copyToClipboard('{{ generated_key.key }}', document.getElementById('gift-key-text'))" class="w-full sm:w-1/2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/50 font-black px-4 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(168,85,247,0.2)] text-xs uppercase tracking-widest">
+                            Copy as Gift
+                        </button>
+                    </div>
+                    
+                    <button onclick="closePaymentModal()" class="mt-6 text-white/30 hover:text-white text-xs uppercase tracking-widest font-bold transition-colors">
+                        Close Window
+                    </button>
+                </div>
+                
+                {% elif payment_state == 'pending' %}
+                <div class="bg-[#050508] border border-yellow-500/50 shadow-[0_0_80px_rgba(234,179,8,0.2)] rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center relative overflow-hidden">
+                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-yellow-500 to-transparent"></div>
+                    <div class="w-24 h-24 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.2)]">
+                        <span class="text-yellow-400 text-5xl animate-pulse">⏳</span>
+                    </div>
+                    <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Transaction Pending.</h2>
+                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your payment is currently confirming on the blockchain network. Once completed, your license key will automatically process into your billing dashboard.</p>
+                    <button onclick="closePaymentModal()" class="w-full bg-yellow-500 hover:bg-yellow-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(234,179,8,0.4)] text-sm uppercase tracking-widest">
+                        Acknowledge
+                    </button>
+                </div>
+                
+                {% elif payment_state == 'canceled' %}
+                <div class="bg-[#050508] border border-red-500/50 shadow-[0_0_80px_rgba(220,38,38,0.2)] rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center relative overflow-hidden">
+                    <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent"></div>
+                    <div class="w-24 h-24 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-red-500/30 shadow-[0_0_30px_rgba(220,38,38,0.2)]">
+                        <span class="text-red-400 text-5xl">⚠️</span>
+                    </div>
+                    <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Payment Canceled.</h2>
+                    <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">The transaction was safely aborted. No charges have been applied to your account.</p>
+                    <button onclick="closePaymentModal()" class="w-full bg-red-500 hover:bg-red-400 text-black font-black px-8 py-4 rounded-xl transition-all shadow-[0_0_30px_rgba(220,38,38,0.4)] text-sm uppercase tracking-widest">
+                        Return to Dashboard
+                    </button>
+                </div>
+                {% endif %}
+                
+            </div>
+            <script>
+                function closePaymentModal() {
+                    const overlay = document.getElementById('payment-overlay');
+                    if(overlay) {
+                        overlay.classList.add('opacity-0');
+                        setTimeout(() => overlay.style.display = 'none', 500);
+                    }
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('payment_return');
+                    url.searchParams.delete('orderId');
+                    url.searchParams.delete('token');
+                    url.searchParams.delete('status');
+                    window.history.replaceState({}, document.title, url);
+                }
+            </script>
+            {% endif %}
+
             <header class="mb-8 flex justify-between items-end border-b border-white/10 pb-5">
                 <div>
                     <h2 class="text-3xl font-black text-white tracking-tighter">Premium Matrix</h2>

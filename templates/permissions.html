@@ -362,7 +362,6 @@
                     overlay.classList.add('opacity-0');
                     setTimeout(() => overlay.style.display = 'none', 500);
                     
-                    // Sanitize URL to prevent data leakage and re-triggering
                     const url = new URL(window.location.href);
                     url.searchParams.delete('success');
                     window.history.replaceState({}, document.title, url);
@@ -629,18 +628,6 @@
                         <div id="premium-countdown" class="text-3xl md:text-5xl font-mono font-black text-white mb-4" data-expires="{{ premium_expires_at }}">
                             Calculating...
                         </div>
-                        
-                        {% if latest_key %}
-                        <div class="mt-6 bg-black/60 border border-emerald-500/20 rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                            <div>
-                                <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-1">Bound License Key</p>
-                                <p title="Click to copy Key" onclick="copyToClipboard('{{ latest_key.key }}', this)" class="text-emerald-400 font-mono text-sm md:text-base font-bold tracking-wider cursor-pointer hover:text-white transition-colors select-none">
-                                    {{ latest_key.key }}
-                                </p>
-                            </div>
-                            <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest shadow-inner whitespace-nowrap">Auto-Renew: Off</span>
-                        </div>
-                        {% endif %}
                     </div>
                 </div>
                 <script>
