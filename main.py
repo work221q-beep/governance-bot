@@ -1207,9 +1207,27 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
 async def admin_generate_key(request: Request):
     if not await check_admin_auth(request): return RedirectResponse("/")
     form = await request.form()
-    days = int(form.get("days", 30))
+    
+    preset = form.get("duration_preset", "30")
+    
+    if preset == "custom":
+        try:
+            val = float(form.get("custom_val", 1))
+            unit = form.get("custom_unit", "days")
+            if unit == "minutes": days = val / 1440.0
+            elif unit == "hours": days = val / 24.0
+            elif unit == "days": days = val
+            elif unit == "weeks": days = val * 7.0
+            elif unit == "months": days = val * 30.0
+            elif unit == "years": days = val * 365.0
+            else: days = val
+        except ValueError:
+            days = 1.0
+    else:
+        days = float(preset)
+        
     from premium import generate_license_key
-    await generate_license_key(days)
+    await generate_license_key(days) # Works flawlessly because timedelta(days=float) is natively supported
     return RedirectResponse("/admin?tab=keys", status_code=303)
 
 @app.post("/admin/server/{guild_id}/toggle_premium")
