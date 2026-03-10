@@ -466,7 +466,8 @@ async def apply_sync_post(request: Request, guild_id: str):
                 await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Infrastructure Sync")
                 await asyncio.sleep(0.3)
             except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Bot lacks permission to edit role {role.name}.')}&error_title=Bot Permission Error", status_code=303)
-            except Exception as e: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Failed to edit role {role.name}: {str(e)[:100]')}&error_title=Error", status_code=303)
+            # FIX: Secured the f-string variable by properly closing the brace
+            except Exception as e: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Failed to edit role {role.name}: {str(e)[:100]}')}&error_title=Error", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
 @app.get("/server/{guild_id}/premium")
@@ -952,6 +953,8 @@ async def admin_generate_key(request: Request):
     if not await check_admin_auth(request): return RedirectResponse("/")
     form = await request.form()
     preset = form.get("duration_preset", "30")
+    
+    # [FIX]: Secured float casting against malformed admin injection attacks
     if preset == "custom":
         try:
             val = float(form.get("custom_val", 1))
@@ -964,7 +967,12 @@ async def admin_generate_key(request: Request):
             elif unit == "years": days = val * 365.0
             else: days = val
         except ValueError: days = 1.0
-    else: days = float(preset)
+    else:
+        try: 
+            days = float(preset)
+        except ValueError:
+            days = 30.0  # Safe default if parameter is manipulated
+            
     from premium import generate_license_key
     await generate_license_key(days) 
     return RedirectResponse("/admin?tab=keys", status_code=303)
