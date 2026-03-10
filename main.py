@@ -456,7 +456,15 @@ async def apply_sync_post(request: Request, guild_id: str):
             if not prop.startswith('_') and prop != 'value' and isinstance(getattr(type(role.permissions), prop, None), property):
                 try: current_kwargs[prop] = getattr(role.permissions, prop)
                 except: pass
-        for p in managed_perms: current_kwargs[p] = p in perms_list
+                
+        # [SECURITY FIX]: Prevent Discord API Exploit via @everyone 
+        # Discord strictly forbids assigning 'Administrator' to @everyone. Doing so causes a silent failure.
+        for p in managed_perms:
+            if role.name == "@everyone" and p == "administrator":
+                current_kwargs[p] = False
+            else:
+                current_kwargs[p] = p in perms_list
+                
         try: new_perms = discord.Permissions(**current_kwargs)
         except Exception: new_perms = role.permissions
         if role.permissions.value != new_perms.value:
@@ -632,7 +640,7 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member: return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # Validation Layer 1: Admin Executing Power
+    # 1: Web Admin Executing Power
     has_perm = False
     if action == "ban" and web_member.guild_permissions.ban_members: has_perm = True
     elif action == "kick" and web_member.guild_permissions.kick_members: has_perm = True
@@ -641,10 +649,17 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if not has_perm: return RedirectResponse(f"/server/{guild_id}/permissions?error=You lack the required permissions to perform this action.&error_title=Access Denied", status_code=303)
     
     tab = "bots" if target.bot else "users"
+    
+    # 2: Hierarchy Protection
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
         
-    # Validation Layer 2: Bot Executing Power
+    # [SECURITY FIX]: Administrator Immunity (Hard Block)
+    # Target administrators are inherently immune from being moderated via the web panel by anyone except the actual server owner.
+    if target.guild_permissions.administrator and guild.owner_id != web_member.id:
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Administrators are immune to web dashboard moderation.&error_title=Protection Matrix", status_code=303)
+
+    # 3: Bot Executing Power
     bot_has_perm = False
     if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
     elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
@@ -655,15 +670,14 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
     
-    # Validation Layer 3: API Hard Restrictions
+    # 4: API Hard Restrictions
     if action == "timeout" and target.guild_permissions.administrator:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
         
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}" + (f"\n*Action triggered by Web Admin: {admin_name}*" if include_name else "")
     
-    # [SECURITY FIX]: Bifurcated Execution Flow
-    # Kicks & Bans MUST send the DM first before mutal server state is severed.
+    # [SECURITY FIX]: BIFURCATED EXECUTION & FALSE-POSITIVE DM ROLLBACK
     if action in ["kick", "ban"]:
         sent_dm = None
         if not target.bot:
@@ -674,15 +688,15 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
             if action == "kick": await target.kick(reason=audit_log_reason)
             elif action == "ban": await target.ban(reason=audit_log_reason)
         except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
-            # Rollback false positive DM if the API abruptly blocks the action
+            # Revert the false-positive DM from the user's inbox if the API abruptly blocks the action
             if sent_dm:
                 try: await sent_dm.delete()
                 except: pass
             error_safe = urllib.parse.quote(str(e)[:150])
             return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
             
-    # Timeouts MUST send the DM last because mutual server state is preserved.
     elif action == "timeout":
+        # Timeouts preserve server membership, so we only send the DM *after* we are mathematically certain the API accepted the penalty.
         try:
             if timeout_duration > 40320 or timeout_duration < 1: raise ValueError("Duration exceeds 28-day API bounds")
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
