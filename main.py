@@ -616,60 +616,85 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     form_data = await request.form()
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    
     custom_reason = form_data.get("reason", "No reason provided.")
     include_name = form_data.get("include_name") == "on"
     timeout_duration = int(form_data.get("duration", 10))
     admin_name = session_user.get('username')
+    
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
-    target = guild.get_member(int(target_id))
+    
+    # [SECURITY FIX]: Use reliable fetch to bypass stale Member Cache evasion
+    target = await get_reliable_member(guild, int(target_id))
     if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member: return RedirectResponse(f"/server/{guild_id}/permissions")
+    
+    # Validation Layer 1: Admin Executing Power
     has_perm = False
     if action == "ban" and web_member.guild_permissions.ban_members: has_perm = True
     elif action == "kick" and web_member.guild_permissions.kick_members: has_perm = True
     elif action == "timeout" and web_member.guild_permissions.moderate_members: has_perm = True
     elif web_member.guild_permissions.administrator or guild.owner_id == web_member.id: has_perm = True
     if not has_perm: return RedirectResponse(f"/server/{guild_id}/permissions?error=You lack the required permissions to perform this action.&error_title=Access Denied", status_code=303)
-    tab = "bots" if target and target.bot else "users"
-    if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
+    
+    tab = "bots" if target.bot else "users"
+    if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: 
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
+        
+    # Validation Layer 2: Bot Executing Power
     bot_has_perm = False
     if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
     elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
     elif action == "timeout" and guild.me.guild_permissions.moderate_members: bot_has_perm = True
     elif guild.me.guild_permissions.administrator: bot_has_perm = True
     if not bot_has_perm: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas lacks permissions to perform this action. Check bot settings.&error_title=Bot Permission Error", status_code=303)
-    if guild.owner_id == target.id or guild.me.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
     
-    # [SECURITY FIX]: Hard pre-flight block for Discord's un-timeoutable Administrator permission restriction
+    if guild.owner_id == target.id or guild.me.top_role <= target.top_role: 
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
+    
+    # Validation Layer 3: API Hard Restrictions
     if action == "timeout" and target.guild_permissions.administrator:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
         
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}" + (f"\n*Action triggered by Web Admin: {admin_name}*" if include_name else "")
     
-    # Send the DM first to ensure delivery before server access is revoked via Kick/Ban
-    sent_dm = None
-    if not target.bot:
-        try: sent_dm = await target.send(dm_message)
-        except discord.Forbidden: pass
-        
-    try:
-        if action == "kick": await target.kick(reason=audit_log_reason)
-        elif action == "ban": await target.ban(reason=audit_log_reason)
-        elif action == "timeout": 
+    # [SECURITY FIX]: Bifurcated Execution Flow
+    # Kicks & Bans MUST send the DM first before mutal server state is severed.
+    if action in ["kick", "ban"]:
+        sent_dm = None
+        if not target.bot:
+            try: sent_dm = await target.send(dm_message)
+            except discord.Forbidden: pass
+            
+        try:
+            if action == "kick": await target.kick(reason=audit_log_reason)
+            elif action == "ban": await target.ban(reason=audit_log_reason)
+        except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
+            # Rollback false positive DM if the API abruptly blocks the action
+            if sent_dm:
+                try: await sent_dm.delete()
+                except: pass
+            error_safe = urllib.parse.quote(str(e)[:150])
+            return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
+            
+    # Timeouts MUST send the DM last because mutual server state is preserved.
+    elif action == "timeout":
+        try:
             if timeout_duration > 40320 or timeout_duration < 1: raise ValueError("Duration exceeds 28-day API bounds")
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
-    except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
-        # [SECURITY FIX]: If the mutation fails, rollback the false-positive DM from the user's inbox
-        if sent_dm:
-            try: await sent_dm.delete()
-            except: pass
-        error_safe = urllib.parse.quote(str(e)[:150])
-        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
+        except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
+            error_safe = urllib.parse.quote(str(e)[:150])
+            return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
+            
+        if not target.bot:
+            try: await target.send(dm_message)
+            except discord.Forbidden: pass
 
-    # Only log to DB after successful API execution
+    # Only log to Database once Discord validates the execution
     from db import db
     await db.audit_logs.insert_one({ "action": action, "guild_id": guild_id, "target_id": target_id, "admin_id": session_user.get("id"), "reason": custom_reason, "timestamp": datetime.datetime.utcnow() })
     
