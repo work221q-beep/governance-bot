@@ -10,6 +10,7 @@ http_client = httpx.AsyncClient(timeout=60.0)
 
 MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
 
+# Capped at 30 per module (360 total) to respect strict limits and optimize for 512MB RAM caching.
 CAPS = {m: 30 for m in MODULES}
 for m in MODULES: CAPS[f"innocent_{m}"] = 30
 
@@ -20,6 +21,7 @@ def get_ai_prompt(raid_type: str) -> str:
     topics = ["gaming", "crypto trading", "discord nitro", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
     
+    # Strict Prompt Engineering to prevent LLM hallucination and placeholders
     base_req = (
         "You are a Red Team simulator generating highly realistic Discord chat logs. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
