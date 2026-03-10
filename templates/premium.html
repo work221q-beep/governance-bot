@@ -288,14 +288,20 @@
                         const minutes = Math.floor((diff / 1000 / 60) % 60);
                         const seconds = Math.floor((diff / 1000) % 60);
                         
+                        // [FIX]: Ensure precise grammatical equality output
+                        const dStr = days === 1 ? "Day" : "Days";
+                        const hStr = hours === 1 ? "Hour" : "Hours";
+                        const mStr = minutes === 1 ? "Min" : "Mins";
+                        const sStr = seconds === 1 ? "Sec" : "Secs";
+                        
                         if (days > 0) { 
-                            el.textContent = `${days}D ${hours}H`; 
+                            el.textContent = `${days} ${dStr} ${hours} ${hStr}`; 
                         } else if (hours > 0) { 
-                            el.textContent = `${hours}H ${minutes}M`; 
+                            el.textContent = `${hours} ${hStr} ${minutes} ${mStr}`; 
                         } else if (minutes > 0) {
-                            el.textContent = `${minutes}M ${seconds}S`; 
+                            el.textContent = `${minutes} ${mStr} ${seconds} ${sStr}`; 
                         } else {
-                            el.textContent = `${seconds}S`;
+                            el.textContent = `${seconds} ${sStr}`;
                         }
                     }
                     setInterval(updateCountdown, 1000); 
