@@ -32,7 +32,6 @@
         function triggerOpenDocument(element) {
             const collName = element.getAttribute('data-coll');
             const docId = element.getAttribute('data-id');
-            // Safely parse the JSON from the data attribute, neutralizing XSS vectors
             const rawJson = JSON.parse(element.getAttribute('data-raw'));
             openDocument(collName, docId, rawJson);
         }
@@ -61,6 +60,7 @@
 
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
+            // ENFORCED DEFAULT: Strictly defaults to control center
             let tab = urlParams.get('tab');
             if (!tab && localStorage.getItem('admin_active_tab')) {
                 tab = localStorage.getItem('admin_active_tab');
@@ -227,6 +227,7 @@
     </div>
 
     <div id="control" class="tab-content grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10 fade-in">
+        
         <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
             <div class="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
             <h3 class="text-xl font-bold text-white mb-4">Discord Bot Engine</h3>
@@ -234,7 +235,7 @@
                 <span class="text-3xl font-black tracking-widest {% if bot_active %}text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]{% else %}text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]{% endif %}">
                     {% if bot_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
-                <form method="post" action="/admin/toggle_bot" class="relative z-10">
+                <form method="post" action="/admin/toggle_state/bot" class="relative z-10">
                     <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
                 </form>
             </div>
@@ -251,6 +252,54 @@
             </div>
             <p class="text-white/40 text-sm mt-6 font-mono">Remote LLM worker status indicator.</p>
         </div>
+
+        <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
+            <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <h3 class="text-xl font-bold text-white mb-4">Payment Gateway</h3>
+            <div class="flex items-center justify-between">
+                <span class="text-3xl font-black tracking-widest {% if app_state.payments_active %}text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]{% else %}text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]{% endif %}">
+                    {% if app_state.payments_active %}ONLINE{% else %}OFFLINE{% endif %}
+                </span>
+                <form method="post" action="/admin/toggle_state/payments" class="relative z-10">
+                    <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
+                </form>
+            </div>
+            <p class="text-white/40 text-sm mt-6 font-mono">Controls the ability to purchase new premium licenses.</p>
+        </div>
+
+        <div class="liquid-glass p-8 rounded-2xl relative overflow-hidden group hover:border-white/20 transition-all duration-500">
+            <div class="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <h3 class="text-xl font-bold text-white mb-4">Key Redemption Matrix</h3>
+            <div class="flex items-center justify-between">
+                <span class="text-3xl font-black tracking-widest {% if app_state.redemption_active %}text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]{% else %}text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]{% endif %}">
+                    {% if app_state.redemption_active %}ONLINE{% else %}OFFLINE{% endif %}
+                </span>
+                <form method="post" action="/admin/toggle_state/redemption" class="relative z-10">
+                    <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
+                </form>
+            </div>
+            <p class="text-white/40 text-sm mt-6 font-mono">Allows users to consume/apply active license keys to servers.</p>
+        </div>
+
+        <div class="liquid-glass p-8 rounded-2xl border {% if app_state.maintenance_mode != 'none' %}border-yellow-500/50 bg-yellow-500/5 shadow-[0_0_20px_rgba(234,179,8,0.15)]{% else %}border-white/5{% endif %} md:col-span-2">
+            <h3 class="text-xl font-bold text-white flex items-center gap-2 mb-4">
+                {% if app_state.maintenance_mode != 'none' %}<span class="text-yellow-500">⚠️</span>{% endif %}
+                Global Maintenance Protocol
+            </h3>
+            <form method="post" action="/admin/set_maintenance" class="flex flex-col md:flex-row gap-4 items-center">
+                <select name="mode" class="flex-1 w-full bg-black/50 border border-white/10 text-white p-4 rounded-lg focus:outline-none focus:border-[#ff003c] font-bold text-sm">
+                    <option value="none" {% if app_state.maintenance_mode == 'none' %}selected{% endif %}>All Systems Normal (None)</option>
+                    <option value="bot" {% if app_state.maintenance_mode == 'bot' %}selected{% endif %}>Discord Bot Offline Only</option>
+                    <option value="web" {% if app_state.maintenance_mode == 'web' %}selected{% endif %}>Web Dashboard Offline Only</option>
+                    <option value="both" {% if app_state.maintenance_mode == 'both' %}selected{% endif %}>Total System Lockdown (Both)</option>
+                </select>
+                <button type="submit" class="w-full md:w-auto bg-white/10 hover:bg-white/20 text-white font-bold py-4 px-8 rounded-lg uppercase tracking-widest text-sm transition-all border border-white/5">
+                    Execute Protocol
+                </button>
+            </form>
+            <p class="text-white/40 text-sm mt-4 font-mono">Restricts access to systems while displaying a maintenance screen. Active mode: {{ app_state.maintenance_mode|upper }}</p>
+        </div>
+
     </div>
 
     <div id="armory" class="tab-content hidden liquid-glass p-8 rounded-2xl relative z-10">
@@ -284,7 +333,7 @@
                         <div id="payload-{{ p._id }}" data-category="{{ raid_type }}" class="payload-item bg-black/40 border border-white/5 hover:border-white/20 p-5 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-all duration-300">
                             <div class="flex-1">
                                 <div class="flex flex-wrap items-center gap-3 mb-2">
-                                    <span class="text-[10px] {% if p.raid_type == 'innocent' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
+                                    <span class="text-[10px] {% if p.raid_type.startswith('innocent') %}bg-emerald-500/10 text-emerald-400 border-emerald-500/20{% else %}bg-red-500/10 text-red-400 border-red-500/20{% endif %} border px-2 py-1 rounded font-black uppercase tracking-wider">{{ p.raid_type }}</span>
                                     
                                     <span title="Click to copy Username" onclick="copyToClipboard('{{ p.username }}', this)" class="text-white text-base font-bold flex items-center gap-2 cursor-pointer hover:text-red-400 transition-colors select-none">
                                         {{ p.username }}
