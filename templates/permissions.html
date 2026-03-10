@@ -347,7 +347,7 @@
                     <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 group hover:border-emerald-500/50 transition-colors">
                         <p class="text-white/40 text-[10px] uppercase tracking-widest font-bold mb-3">Premium Matrix Duration (Redeemed)</p>
                         <p class="text-emerald-400 font-mono text-xl md:text-2xl font-black tracking-widest select-none group-hover:text-white transition-colors">
-                            {{ latest_key.duration_days }} Days
+                            {{ format_duration(latest_key.duration_days) }}
                         </p>
                     </div>
 
@@ -636,14 +636,27 @@
                         if (!el) return;
                         const expiresDate = new Date(el.getAttribute('data-expires'));
                         const diff = expiresDate - new Date();
-                        if (diff <= 0) { el.textContent = "EXPIRED"; el.classList.add('text-[#ff003c]'); return; }
+                        
+                        if (diff <= 0) { 
+                            el.textContent = "EXPIRED"; 
+                            el.classList.add('text-[#ff003c]'); 
+                            return; 
+                        }
+                        
                         const days = Math.floor(diff / (1000 * 60 * 60 * 24));
                         const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
                         const minutes = Math.floor((diff / 1000 / 60) % 60);
-                        if (days > 0) { el.textContent = `${days} Days, ${hours} Hours`; } 
-                        else { el.textContent = `${hours} Hours, ${minutes} Min`; }
+                        
+                        if (days > 0) { 
+                            el.textContent = `${days} Days, ${hours} Hours`; 
+                        } else if (hours > 0) { 
+                            el.textContent = `${hours} Hours, ${minutes} Mins`; 
+                        } else { 
+                            el.textContent = `${minutes} Mins`; 
+                        }
                     }
-                    setInterval(updateBillingCountdown, 60000); updateBillingCountdown();
+                    setInterval(updateBillingCountdown, 60000); 
+                    updateBillingCountdown();
                 </script>
                 {% else %}
                 <div class="bg-gradient-to-br from-[#ff003c]/10 to-[#7000ff]/10 border border-white/10 rounded-2xl p-8 mb-10 flex flex-col md:flex-row justify-between items-center gap-6">
@@ -662,7 +675,7 @@
                     {% for p in guild_payments %}
                     <div class="bg-black/40 border border-white/5 p-5 rounded-xl flex justify-between items-center hover:bg-white/[0.02] transition-colors">
                         <div>
-                            <p class="text-white font-mono text-xl font-black">${{ p.amount }} <span class="text-white/40 text-xs font-sans tracking-wide font-normal ml-2">{{ p.days }} Days</span></p>
+                            <p class="text-white font-mono text-xl font-black">${{ p.amount }} <span class="text-white/40 text-xs font-sans tracking-wide font-normal ml-2">{{ format_duration(p.days) }}</span></p>
                             <p class="text-white/40 text-[10px] mt-1.5 font-mono">ID: {{ p.internal_order_id }} | Created: {{ p.created_at.strftime('%Y-%m-%d %H:%M UTC') if p.created_at else 'Unknown' }}</p>
                         </div>
                         <div>
@@ -897,10 +910,10 @@
             {% else %}
                 {% if unacknowledged_key.shown_count > 0 %}
                 <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Session Recovered.</h2>
-                <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your session abruptly ended during payment. Don't worry, your <strong class="text-purple-400">{{ unacknowledged_key.duration_days }}-Day</strong> premium matrix was safely secured.</p>
+                <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your session abruptly ended during payment. Don't worry, your <strong class="text-purple-400">{{ format_duration(unacknowledged_key.duration_days) }}</strong> premium matrix was safely secured.</p>
                 {% else %}
                 <h2 class="text-3xl md:text-5xl font-black text-white mb-4 tracking-tighter">Transaction Verified.</h2>
-                <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your <strong class="text-purple-400">{{ unacknowledged_key.duration_days }}-Day</strong> premium matrix has been secured. Choose your deployment method.</p>
+                <p class="text-white/60 text-base md:text-lg mb-8 leading-relaxed font-light">Your <strong class="text-purple-400">{{ format_duration(unacknowledged_key.duration_days) }}</strong> premium matrix has been secured. Choose your deployment method.</p>
                 {% endif %}
                 
                 <div class="bg-black/50 border border-white/10 rounded-2xl p-6 mb-8 text-left">
