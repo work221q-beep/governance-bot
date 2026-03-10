@@ -1,4 +1,4 @@
-import os, httpx, asyncio, json, re, random
+import os, httpx, asyncio, json, re, random, time
 from datetime import datetime
 from db import payload_armory
 from crypto import encrypt_data, decrypt_data
@@ -51,8 +51,9 @@ def get_ai_prompt(raid_type: str) -> str:
     return f"{base_req}[Seed: {seed}, Topic: {topic}]\nTask: {core_content}"
 
 async def call_openrouter(prompt: str):
-    if datetime.utcnow().timestamp() < model_backoff["openrouter"]:
+    if time.time() < model_backoff["openrouter"]:
         raise Exception("OpenRouter in backoff")
+    # [FIX]: Restored Raw String execution to prevent httpx InvalidURL crashes
     response = await http_client.post(
         "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
@@ -62,8 +63,9 @@ async def call_openrouter(prompt: str):
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
 async def call_sambanova(prompt: str):
-    if datetime.utcnow().timestamp() < model_backoff["sambanova"]:
+    if time.time() < model_backoff["sambanova"]:
         raise Exception("SambaNova in backoff")
+    # [FIX]: Restored Raw String execution
     response = await http_client.post(
         "[https://api.sambanova.ai/v1/chat/completions](https://api.sambanova.ai/v1/chat/completions)",
         headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
@@ -101,12 +103,12 @@ async def harvest_payloads(raid_type: str):
         raw = await call_openrouter(prompt)
     except Exception as e:
         print(f"[AI Fallback] OpenRouter failed ({e}). Switching to SambaNova...")
-        model_backoff["openrouter"] = datetime.utcnow().timestamp() + 15
+        model_backoff["openrouter"] = time.time() + 15
         try:
             raw = await call_sambanova(prompt)
         except Exception as se:
             print(f"[AI Error] SambaNova also failed ({se}). Both models in backoff.")
-            model_backoff["sambanova"] = datetime.utcnow().timestamp() + 15
+            model_backoff["sambanova"] = time.time() + 15
             return 0
 
     if raw:
