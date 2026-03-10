@@ -10,8 +10,6 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
 engine_state = {"active": True}
 active_wargames = {}
-
-# MEMORY LEAK FIX: We now only store lightweight IDs, not heavy discord.Message objects
 pending_dropdowns = {} 
 active_guild_sessions = set() 
 startraid_abort_confirm = {} 
@@ -45,11 +43,9 @@ class RaidSelect(discord.ui.Select):
 
         allowed, time_left = await check_cooldown(guild_id, selected_raid, is_prem)
         if not allowed:
+            tier_text = "4-Hour" if is_prem else "24-Hour"
             await interaction.response.send_message(f"⏳ **Protocol on Cooldown.**\n**Time Remaining:** {time_left}", ephemeral=True)
             return
-
-        # COOLDOWN RACE CONDITION FIX: Apply cooldown immediately before the Wargame begins to prevent double-spending.
-        await set_cooldown(guild_id, selected_raid)
 
         pending_dropdowns.pop(interaction.message.id, None)
         await interaction.response.edit_message(content="⚡ **Deploying protocol...**", view=None) 
@@ -97,9 +93,11 @@ async def start_raid(interaction: discord.Interaction):
                 if channel and channel.guild.id == interaction.guild.id: wargame["cancelled"] = True
                     
             to_remove = []
-            for msg_id, meta in pending_dropdowns.items():
-                if meta["guild_id"] == interaction.guild.id:
+            for msg_id, msg in pending_dropdowns.items():
+                if msg.guild and msg.guild.id == interaction.guild.id:
                     to_remove.append(msg_id)
+                    try: await msg.delete()
+                    except: pass
             for m_id in to_remove: pending_dropdowns.pop(m_id, None)
                 
             if interaction.guild.id in active_guild_sessions: active_guild_sessions.remove(interaction.guild.id)
@@ -119,12 +117,7 @@ async def start_raid(interaction: discord.Interaction):
     view = RaidView(dropdown_msg)
     await dropdown_msg.edit(view=view)
     view.message = dropdown_msg
-    
-    # MEMORY LEAK FIX: Store metadata, not the object.
-    pending_dropdowns[dropdown_msg.id] = {
-        "guild_id": interaction.guild.id,
-        "channel_id": interaction.channel_id
-    }
+    pending_dropdowns[dropdown_msg.id] = dropdown_msg
 
 @bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
 @discord.app_commands.default_permissions(administrator=True)
@@ -141,9 +134,11 @@ async def end_raid(interaction: discord.Interaction):
             killed_active_game = True
             
     to_remove = []
-    for msg_id, meta in pending_dropdowns.items():
-        if meta["guild_id"] == interaction.guild.id:
+    for msg_id, msg in pending_dropdowns.items():
+        if msg.guild.id == interaction.guild.id:
             to_remove.append(msg_id)
+            try: await msg.delete()
+            except: pass
     for m_id in to_remove: pending_dropdowns.pop(m_id, None)
 
     if interaction.guild.id in active_guild_sessions: active_guild_sessions.remove(interaction.guild.id)
@@ -156,6 +151,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     status_embed = discord.Embed(title="⚡ Wargame Active", description="Injecting threats and contextual false positives...", color=discord.Color.dark_purple())
     status_msg = await channel.send(embed=status_embed)
     
+    artifacts = []
     spawned_msgs = []
     game_id = str(interaction.id)
     
@@ -174,17 +170,21 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     all_payloads = scams + innocents
     random.shuffle(all_payloads)
     
+    valid_names = [p["username"] for p in all_payloads if p.get("username")]
+    wh_base_name = random.choice(valid_names)[:32] if valid_names else "Sylas_Ghost"
+    
     try:
-        # WEBHOOK RATE LIMIT FIX: We now recycle webhooks instead of creating/deleting them constantly.
-        webhook = None
-        existing_webhooks = await channel.webhooks()
-        for wh in existing_webhooks:
-            if wh.name.startswith("Sylas"):
-                webhook = wh
-                break
-                
-        if not webhook:
-            webhook = await channel.create_webhook(name="Sylas_Ghost_Matrix")
+        try:
+            existing_webhooks = await channel.webhooks()
+            if len(existing_webhooks) >= 8:
+                for wh in existing_webhooks:
+                    if wh.name.startswith("Sylas"): 
+                        try: await wh.delete()
+                        except: pass
+        except Exception: pass
+
+        webhook = await channel.create_webhook(name=wh_base_name)
+        artifacts.append(webhook)
         
         await status_msg.edit(embed=discord.Embed(title="⚔️ Wargame Deployed", description="Monitoring channel for Mod Response...", color=discord.Color.red()))
         
@@ -197,7 +197,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         
         for p in all_payloads:
             try:
-                # Dynamically inject the fake username onto the recycled webhook
                 msg = await webhook.send(content=p["spam_message"], username=p["username"], wait=True)
                 spawned_msgs.append(msg)
                 active_wargames[game_id]["msg_map"][msg.id] = p["is_malicious"]
@@ -235,16 +234,16 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
                 await status_msg.edit(embed=final_embed)
                 await status_msg.delete(delay=15.0)
             except: pass
+            
+            if wargame.get("attempts", 0) > 0 or (wargame["scams_left"] == 0 and not wargame["failed"]):
+                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
                 
         elif wargame and wargame.get("cancelled"):
             try: await status_msg.delete()
             except: pass
 
-            # COOLDOWN REFUND: If a wargame is cancelled before any actions occur, we refund the cooldown.
-            if wargame.get("attempts", 0) == 0:
-                from db import guild_cooldowns
-                await guild_cooldowns.delete_one({"guild_id": str(wargame["guild_id"]), "raid_type": wargame["raid_type"]})
-
+            if wargame.get("attempts", 0) > 0:
+                await set_cooldown(wargame["guild_id"], wargame["raid_type"])
             if wargame.get("cancelled_reason") == "purge":
                 try: await channel.send("🛑 **Wargame Cancelled.** Element purged by moderator.", delete_after=10.0)
                 except: pass
@@ -254,61 +253,60 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         for msg in spawned_msgs:
             try: await msg.delete()
             except: pass
-            
-        # Notice: `await webhook.delete()` has been intentionally removed to protect your rate limits.
-
+        for entity in artifacts:
+            try: await entity.delete()
+            except: pass
         try: await dropdown_msg.delete()
         except: pass
         try: await original_cmd_msg.delete()
         except: pass
 
-# RAW EVENT LISTENER: Bypasses Discord's internal cache limits to guarantee interception
+# FIX: Added a robust background task wrapper to safely suppress discord.NotFound exceptions
 @bot.event
-async def on_raw_message_delete(payload):
-    message_id = payload.message_id
-
-    # --- UI DELETION NOTIFICATION FIX ---
-    if message_id in pending_dropdowns:
-        meta = pending_dropdowns.pop(message_id)
-        if meta["guild_id"] in active_guild_sessions:
-            active_guild_sessions.remove(meta["guild_id"])
+async def on_message_delete(message):
+    if message.id in pending_dropdowns:
+        original_cmd_msg = pending_dropdowns.pop(message.id)
+        if message.guild.id in active_guild_sessions:
+            active_guild_sessions.remove(message.guild.id)
             
-        try:
-            channel = bot.get_channel(meta["channel_id"])
-            if channel:
-                await channel.send("🛑 **Deployment Aborted.** Selection interface was destroyed.", delete_after=10.0)
-        except Exception as e: 
-            print(f"Failed to send abort msg: {e}")
+        async def safe_delete(msg):
+            try:
+                await msg.delete()
+            except discord.NotFound:
+                # The message was already deleted before the task could run.
+                pass
+            except Exception:
+                pass
+                
+        bot.loop.create_task(safe_delete(original_cmd_msg))
         return
-    # ------------------------------------
 
     for game_id, wargame in list(active_wargames.items()):
-        if message_id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
+        if message.id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
                 wargame["cancelled"] = True
                 wargame["cancelled_reason"] = "purge"
             continue
 
-        if message_id in wargame["msg_map"]:
+        if message.id in wargame["msg_map"]:
             wargame["attempts"] += 1
-            is_malicious = wargame["msg_map"][message_id]
+            is_malicious = wargame["msg_map"][message.id]
             time_alive = (discord.utils.utcnow() - wargame["start_time"]).total_seconds()
             
             try:
                 channel = bot.get_channel(wargame["channel_id"])
-                if channel:
-                    status_msg = await channel.fetch_message(wargame["status_msg_id"])
-                    embed = status_msg.embeds[0]
-                    
-                    if not is_malicious:
-                        wargame["failed"] = True
-                        embed.color = discord.Color.red()
-                        embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted a contextual false positive at **{time_alive:.1f}s**!", inline=False)
-                    else:
-                        wargame["scams_left"] -= 1
-                        embed.add_field(name="🛡️ Threat Neutralized", value=f"Payload deleted in **{time_alive:.1f}s**.", inline=False)
-                    
-                    await status_msg.edit(embed=embed)
+                status_msg = await channel.fetch_message(wargame["status_msg_id"])
+                embed = status_msg.embeds[0]
+                
+                if not is_malicious:
+                    wargame["failed"] = True
+                    embed.color = discord.Color.red()
+                    embed.add_field(name="🚨 FATAL ERROR", value=f"Mod deleted a contextual false positive at **{time_alive:.1f}s**!", inline=False)
+                else:
+                    wargame["scams_left"] -= 1
+                    embed.add_field(name="🛡️ Threat Neutralized", value=f"Payload deleted in **{time_alive:.1f}s**.", inline=False)
+                
+                await status_msg.edit(embed=embed)
             except Exception: pass
 
 async def start_bot():

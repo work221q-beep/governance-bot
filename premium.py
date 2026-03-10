@@ -146,7 +146,3 @@ async def set_cooldown(guild_id: int, raid_type: str):
         {"$set": {"last_used": now}},
         upsert=True
     )
-
-async def clear_cooldown(guild_id: int, raid_type: str):
-    """Instantly refunds a wargame cooldown if the deployment was aborted."""
-    await guild_cooldowns.delete_one({"guild_id": str(guild_id), "raid_type": raid_type})

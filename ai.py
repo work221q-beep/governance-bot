@@ -21,6 +21,7 @@ def get_ai_prompt(raid_type: str) -> str:
     topics = ["gaming", "crypto trading", "nitro giveaways", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
     
+    # FIX: Heavily reinforced system prompt for high-quality, realistic output and strict JSON formatting.
     base_req = (
         "You are an expert Red Team simulator generating highly realistic Discord chat logs for training moderation tools. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
@@ -53,7 +54,7 @@ async def call_openrouter(prompt: str):
     response = await http_client.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}], "temperature": 0.7}
+        json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}]}
     )
     response.raise_for_status()
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -64,6 +65,7 @@ async def call_sambanova(prompt: str):
     response = await http_client.post(
         "https://api.sambanova.ai/v1/chat/completions",
         headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
+        # FIX: Increased temperature from 0.1 to 0.7 for better variation in payloads
         json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
     )
     response.raise_for_status()
@@ -72,19 +74,18 @@ async def call_sambanova(prompt: str):
 def extract_payloads_safely(raw_text: str):
     payloads = []
     try:
+        # FIX: Safely strip markdown hallucination artifacts (```json)
         clean_text = raw_text.replace("```json", "").replace("```", "").strip()
         json_match = re.search(r'\[.*\]', clean_text, re.DOTALL)
         if json_match: return json.loads(json_match.group(0))
-    except Exception as e:
-        print(f"[Extraction Warning] Failed primary JSON parse: {e}")
+    except Exception: pass
     
+    # Aggressive fallback extraction for cut-off LLM strings
     try:
         matches = re.finditer(r'\{\s*"username"\s*:\s*"([^"]+)"\s*,\s*"spam_message"\s*:\s*"([^"]+)"', raw_text)
         for match in matches:
             payloads.append({"username": match.group(1), "spam_message": match.group(2)})
-    except Exception as e:
-        print(f"[Extraction Error] Fallback regex failed: {e}")
-        
+    except Exception: pass
     return payloads
 
 async def harvest_payloads(raid_type: str):
@@ -97,12 +98,10 @@ async def harvest_payloads(raid_type: str):
     try:
         raw = await call_openrouter(prompt)
     except Exception as e:
-        print(f"[AI Fallback] OpenRouter failed ({e}). Switching to SambaNova...")
         model_backoff["openrouter"] = datetime.utcnow().timestamp() + 15
         try:
             raw = await call_sambanova(prompt)
         except Exception as se:
-            print(f"[AI Error] SambaNova also failed ({se}). Both models in backoff.")
             model_backoff["sambanova"] = datetime.utcnow().timestamp() + 15
             return 0
 
@@ -122,18 +121,18 @@ async def harvest_payloads(raid_type: str):
             
             if inserts:
                 await payload_armory.insert_many(inserts)
-                print(f"⚡ Harvester generated {len(inserts)} {raid_type} payloads via hybrid pool.")
+                print(f"⚡ Harvester generated {len(inserts)} {raid_type} payloads.")
                 return len(inserts)
     return 0
 
 async def parallel_harvest_sweep():
     # FIX: Hardware Optimization for 0.5 vCPU / 512MB RAM
+    # Reduced from 10 to 2 to prevent event loop blocking and container timeouts.
     sem = asyncio.Semaphore(2) 
     async def safe_harvest(r_type):
         try:
             async with sem: await harvest_payloads(r_type)
-        except Exception as e:
-            print(f"[Sweep Error] Failed on {r_type}: {e}")
+        except Exception: pass
             
     tasks =[safe_harvest(r_type) for r_type, cap in CAPS.items() 
              if await payload_armory.count_documents({"raid_type": r_type}) < cap]
@@ -143,7 +142,7 @@ async def harvest_loop():
     await asyncio.sleep(5) 
     while True:
         try: await parallel_harvest_sweep()
-        except Exception as e: print(f"[Loop Error] {e}")
+        except Exception: pass
         # FIX: Increased baseline delay to give the 0.5 vCPU breathing room
         await asyncio.sleep(15) 
 
