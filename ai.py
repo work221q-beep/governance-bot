@@ -21,7 +21,7 @@ def get_ai_prompt(raid_type: str) -> str:
     topics = ["gaming", "crypto trading", "discord nitro", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
     
-    # [SECURITY FIX]: Strict Prompt Engineering to prevent LLM hallucination and placeholders
+    # Strict Prompt Engineering to prevent LLM hallucination and placeholders
     base_req = (
         "You are a Red Team simulator generating highly realistic Discord chat logs. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
@@ -53,7 +53,8 @@ def get_ai_prompt(raid_type: str) -> str:
 async def call_openrouter(prompt: str):
     if time.time() < model_backoff["openrouter"]:
         raise Exception("OpenRouter in backoff")
-    # [FIX]: Restored Raw String execution to prevent httpx InvalidURL crashes
+        
+    # Hardcoded raw string to prevent HTTPX parse failures
     response = await http_client.post(
         "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
@@ -65,7 +66,8 @@ async def call_openrouter(prompt: str):
 async def call_sambanova(prompt: str):
     if time.time() < model_backoff["sambanova"]:
         raise Exception("SambaNova in backoff")
-    # [FIX]: Restored Raw String execution
+        
+    # Hardcoded raw string to prevent HTTPX parse failures
     response = await http_client.post(
         "[https://api.sambanova.ai/v1/chat/completions](https://api.sambanova.ai/v1/chat/completions)",
         headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
