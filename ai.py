@@ -10,7 +10,7 @@ http_client = httpx.AsyncClient(timeout=60.0)
 
 MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
 
-# FIX: Capped at 30 per module (360 total) to respect strict limits and optimize for 512MB RAM caching.
+# Capped at 30 per module (360 total) to respect strict limits and optimize for 512MB RAM caching.
 CAPS = {m: 30 for m in MODULES}
 for m in MODULES: CAPS[f"innocent_{m}"] = 30
 
@@ -18,30 +18,33 @@ model_backoff = {"openrouter": 0, "sambanova": 0}
 
 def get_ai_prompt(raid_type: str) -> str:
     seed = random.randint(10000, 99999)
-    topics = ["gaming", "crypto trading", "nitro giveaways", "server drama", "tech support", "esports", "streaming", "art commissions"]
+    topics = ["gaming", "crypto trading", "discord nitro", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
     
+    # [SECURITY FIX]: Strict Prompt Engineering to prevent LLM hallucination and placeholders
     base_req = (
-        "You are an expert Red Team simulator generating highly realistic Discord chat logs for training moderation tools. "
+        "You are a Red Team simulator generating highly realistic Discord chat logs. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
-        "Each object must have exactly two keys: 'username' (a believable Discord name) and 'spam_message' (the chat content). "
-        "DO NOT include markdown formatting, code blocks, or conversational text outside the JSON. "
-        "The messages MUST sound like real humans on Discord, using internet slang, casual typos, and natural pacing.\n\n"
+        "Format: [{\"username\": \"DarkSlayer99\", \"spam_message\": \"yo anyone wanna play?\"}]\n"
+        "CRITICAL RULES:\n"
+        "1. DO NOT USE PLACEHOLDERS like {link}, [URL], or <username>. You MUST invent believable fake links (e.g., youtu.be/dQw4, discord.gg/nitro-free-123, crypto-wallet.xyz/login).\n"
+        "2. Sound exactly like real internet users. Use mostly lowercase, internet slang (rn, tbh, wtf, bro, fr), and occasional natural typos.\n"
+        "3. DO NOT output ANY markdown, conversational text, or code block ticks (```json) outside the array. Output raw JSON only.\n\n"
     )
     
     prompts = {
-        "phishing": f"Generate highly deceptive phishing links disguised as a {topic} discussion (e.g., 'bro check this free nitro link hxxp://discorcl-nitro.com/gift').",
-        "spam_flood": f"Generate obnoxious, highly repetitive bot spam about {topic} with excessive emojis and fake invites.",
-        "fake_mod": f"Generate messages using social engineering where a user pretends to be a server admin/mod handling a {topic} issue to steal info.",
-        "insider_threat": f"Generate messages where a highly trusted, long-time user suddenly goes rogue, abusing their trust to post malicious {topic} links.",
-        "escalation": f"Generate extremely toxic messages showing an argument about {topic} escalating into severe verbal harassment and slurs.",
-        "harassment": f"Generate coordinated group brigading messages targeting a specific user over {topic}, trying to dox or cancel them.",
-        "innocent_phishing": f"Generate COMPLETELY SAFE, normal chat messages sharing legitimate links (like YouTube or Wikipedia) about {topic}.",
-        "innocent_spam_flood": f"Generate harmless but hyperactive chat messages of an excited user typing fast in all caps about {topic}.",
+        "phishing": f"Generate highly deceptive phishing messages disguised as a {topic} discussion. Users are trying to trick others into clicking dangerous links. (e.g., 'bro check this out [discord-promo.com/gift](https://discord-promo.com/gift)').",
+        "spam_flood": f"Generate obnoxious, hyper-repetitive bot spam about {topic}. Use excessive emojis, all caps, and fake invite links (e.g., 'JOIN NOW discord.gg/freemoney 🚀🚀🚀').",
+        "fake_mod": f"Generate messages where a scammer pretends to be a server admin or Discord staff handling a {topic} issue. They should try to socially engineer users into handing over account details or clicking verification links.",
+        "insider_threat": f"Generate messages where a highly trusted, long-time user suddenly goes rogue. They are abusing their trust to post malicious {topic} links while pretending everything is normal.",
+        "escalation": f"Generate extremely toxic messages showing an argument about {topic} rapidly escalating into severe verbal harassment, swearing, and insults.",
+        "harassment": f"Generate coordinated group brigading messages targeting a specific user over {topic}. They should be trying to dox, cancel, or mass-report them.",
+        "innocent_phishing": f"Generate COMPLETELY SAFE, normal chat messages sharing legitimate, well-known links (like real YouTube videos, Wikipedia, or Twitter) discussing {topic}.",
+        "innocent_spam_flood": f"Generate harmless but hyperactive chat messages of an excited user typing fast in all caps about {topic} because they are hyped.",
         "innocent_fake_mod": f"Generate normal messages of users politely asking the actual server mods legitimate questions regarding {topic}.",
-        "innocent_insider_threat": f"Generate very helpful, wholesome messages from long-time trusted members explaining {topic}.",
-        "innocent_escalation": f"Generate messages showing a respectful, calm debate about {topic} without any insults.",
-        "innocent_harassment": f"Generate friendly banter and obvious sarcastic teasing between close friends discussing {topic}."
+        "innocent_insider_threat": f"Generate very helpful, wholesome messages from long-time trusted members explaining {topic} to a newcomer.",
+        "innocent_escalation": f"Generate messages showing a respectful, calm, and highly intellectual debate about {topic} without any insults.",
+        "innocent_harassment": f"Generate friendly banter and obvious sarcastic teasing between close friends discussing {topic}. It must be clearly harmless."
     }
     
     core_content = prompts.get(raid_type, "casual chat messages.")
@@ -51,9 +54,9 @@ async def call_openrouter(prompt: str):
     if datetime.utcnow().timestamp() < model_backoff["openrouter"]:
         raise Exception("OpenRouter in backoff")
     response = await http_client.post(
-        "https://openrouter.ai/api/v1/chat/completions",
+        "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}], "temperature": 0.7}
+        json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}], "temperature": 0.8}
     )
     response.raise_for_status()
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -62,9 +65,9 @@ async def call_sambanova(prompt: str):
     if datetime.utcnow().timestamp() < model_backoff["sambanova"]:
         raise Exception("SambaNova in backoff")
     response = await http_client.post(
-        "https://api.sambanova.ai/v1/chat/completions",
+        "[https://api.sambanova.ai/v1/chat/completions](https://api.sambanova.ai/v1/chat/completions)",
         headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
+        json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
     )
     response.raise_for_status()
     return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -127,7 +130,6 @@ async def harvest_payloads(raid_type: str):
     return 0
 
 async def parallel_harvest_sweep():
-    # FIX: Hardware Optimization for 0.5 vCPU / 512MB RAM
     sem = asyncio.Semaphore(2) 
     async def safe_harvest(r_type):
         try:
@@ -144,7 +146,6 @@ async def harvest_loop():
     while True:
         try: await parallel_harvest_sweep()
         except Exception as e: print(f"[Loop Error] {e}")
-        # FIX: Increased baseline delay to give the 0.5 vCPU breathing room
         await asyncio.sleep(15) 
 
 async def get_preloaded_payloads(intensity: int, raid_type: str):
