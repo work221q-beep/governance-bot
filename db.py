@@ -3,8 +3,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 MONGO_URI = os.getenv("MONGO_URI")
 
-# SECURITY FIX: Restored Motor Async for FastAPI/Discord compatibility,
-# but enforced strict pool limits to prevent connection exhaustion.
 client = AsyncIOMotorClient(
     MONGO_URI,
     maxPoolSize=50,
