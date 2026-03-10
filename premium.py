@@ -7,6 +7,9 @@ from db import guild_premium, guild_cooldowns, license_keys
 PREMIUM_FEATURES = ["fake_mod", "insider_threat", "escalation", "harassment"]
 FREE_FEATURES = ["phishing", "spam_flood"]
 
+# PROPER SECURITY FIX: Sharded Lock Pool
+# Handles concurrency safely without leaking memory or crashing the event loop.
+# This strictly resolves the issue where the bot freezes and fails to delete messages.
 LOCK_SHARDS = 256
 _shards = [asyncio.Lock() for _ in range(LOCK_SHARDS)]
 
@@ -14,6 +17,7 @@ def get_lock(guild_id: str):
     return _shards[hash(str(guild_id)) % LOCK_SHARDS]
 
 async def generate_license_key(days: int) -> str:
+    """Generates a complex single-use license key valid for 24 hours."""
     alphabet = string.ascii_letters + string.digits
     raw_key = "".join(secrets.choice(alphabet) for _ in range(32))
     key = f"SYLAS-{raw_key[:8]}-{raw_key[8:16]}-{raw_key[16:24]}-{raw_key[24:]}"
@@ -29,6 +33,7 @@ async def generate_license_key(days: int) -> str:
     return key
 
 async def redeem_license_key(guild_id: str, key: str) -> bool:
+    """Redeems a license key and grants premium to the server."""
     record = await license_keys.find_one({"key": key, "used": False})
     if not record:
         return False
@@ -43,6 +48,7 @@ async def redeem_license_key(guild_id: str, key: str) -> bool:
     if datetime.utcnow() > exp:
         return False
     
+    # Atomic state lock to prevent double-spending
     update_result = await license_keys.update_one(
         {"_id": record["_id"], "used": False}, 
         {"$set": {"used": True, "used_by_guild": str(guild_id)}}
@@ -55,6 +61,7 @@ async def redeem_license_key(guild_id: str, key: str) -> bool:
     return True
 
 async def is_guild_premium(guild_id: int) -> bool:
+    """Checks if a server has an active premium subscription."""
     sub = await guild_premium.find_one({"guild_id": str(guild_id)})
     if not sub:
         return False
@@ -75,6 +82,7 @@ async def is_guild_premium(guild_id: int) -> bool:
     return True
 
 async def grant_premium(guild_id: str, days: int):
+    """Grants or extends premium for a server atomically."""
     str_guild_id = str(guild_id)
         
     async with get_lock(str_guild_id):
@@ -105,6 +113,7 @@ async def grant_premium(guild_id: str, days: int):
         await guild_cooldowns.delete_many({"guild_id": str_guild_id})
 
 async def check_cooldown(guild_id: int, raid_type: str, is_premium: bool) -> tuple[bool, str]:
+    """Checks if a wargame is on cooldown. Returns (Is_Allowed, Time_Remaining_String)"""
     cooldown_hours = 4 if is_premium else 24
     
     record = await guild_cooldowns.find_one({"guild_id": str(guild_id), "raid_type": raid_type})
@@ -130,9 +139,14 @@ async def check_cooldown(guild_id: int, raid_type: str, is_premium: bool) -> tup
     return True, ""
 
 async def set_cooldown(guild_id: int, raid_type: str):
+    """Sets the cooldown for a wargame."""
     now = datetime.utcnow()
     await guild_cooldowns.update_one(
         {"guild_id": str(guild_id), "raid_type": raid_type},
         {"$set": {"last_used": now}},
         upsert=True
     )
+
+async def clear_cooldown(guild_id: int, raid_type: str):
+    """Instantly refunds a wargame cooldown if the deployment was aborted."""
+    await guild_cooldowns.delete_one({"guild_id": str(guild_id), "raid_type": raid_type})

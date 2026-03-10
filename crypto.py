@@ -33,4 +33,6 @@ def decrypt_data(data: str) -> str:
     try:
         return fernet.decrypt(data_str.encode()).decode()
     except Exception:
+        # CRITICAL FIX: If decryption fails (e.g. key changed, or legacy plain-text data), 
+        # return the raw string instead of returning the error tag.
         return data_str
