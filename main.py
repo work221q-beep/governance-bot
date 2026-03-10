@@ -133,7 +133,7 @@ async def verify_and_fulfill_payment(token: str):
     if not paymento_api_key: return None
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
+            verify_resp = await client.post("[https://api.paymento.io/v1/payment/verify](https://api.paymento.io/v1/payment/verify)", headers={
                 "Api-key": paymento_api_key, "Content-Type": "application/json"
             }, json={"token": token})
             verify_data = verify_resp.json()
@@ -192,7 +192,7 @@ async def login(request: Request, next_url: str = None):
     encoded_next_url = urllib.parse.quote(next_url, safe="") if next_url else "none"
     state = f"login_{encoded_next_url}_{oauth_state}"
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
+    url = f"[https://discord.com/api/oauth2/authorize?client_id=](https://discord.com/api/oauth2/authorize?client_id=){DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
     response = RedirectResponse(url)
     response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
@@ -210,7 +210,7 @@ async def logout(request: Request):
 async def invite_bot(guild_id: str = None):
     state = f"invite_{guild_id}" if guild_id else "invite"
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot&redirect_uri={encoded_uri}&response_type=code&state={state}"
+    url = f"[https://discord.com/api/oauth2/authorize?client_id=](https://discord.com/api/oauth2/authorize?client_id=){DISCORD_CLIENT_ID}&permissions=8&scope=bot&redirect_uri={encoded_uri}&response_type=code&state={state}"
     if guild_id: url += f"&guild_id={guild_id}&disable_guild_select=true"
     return RedirectResponse(url)
 
@@ -228,7 +228,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     if error or not code: return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient() as client:
-        token_res = await client.post("https://discord.com/api/oauth2/token", data={
+        token_res = await client.post("[https://discord.com/api/oauth2/token](https://discord.com/api/oauth2/token)", data={
             "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI
         })
@@ -236,11 +236,11 @@ async def callback(request: Request, code: str = None, error: str = None, state:
         access_token = token_data.get("access_token")
         if not access_token: return RedirectResponse(url="/login?error=auth_failed")
             
-        user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
+        user_res = await client.get("[https://discord.com/api/users/@me](https://discord.com/api/users/@me)", headers={"Authorization": f"Bearer {access_token}"})
         if user_res.status_code != 200: return RedirectResponse(url="/login?error=discord_api_failure")
             
         user = user_res.json()
-        guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
+        guilds = (await client.get("[https://discord.com/api/users/@me/guilds](https://discord.com/api/users/@me/guilds)", headers={"Authorization": f"Bearer {access_token}"})).json()
 
     manageable_guilds = []
     for g in guilds:
@@ -250,7 +250,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             if g.get("owner") or (int(perms_str) & 0x8) == 0x8: manageable_guilds.append(g)
         except (ValueError, TypeError): continue
             
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png" if user.get("avatar") else None
+    avatar_url = f"[https://cdn.discordapp.com/avatars/](https://cdn.discordapp.com/avatars/){user['id']}/{user['avatar']}.png" if user.get("avatar") else None
     
     redirect_url = "/dashboard"
     if state and state.startswith("login_"):
@@ -457,8 +457,7 @@ async def apply_sync_post(request: Request, guild_id: str):
                 try: current_kwargs[prop] = getattr(role.permissions, prop)
                 except: pass
                 
-        # [SECURITY FIX]: Prevent Discord API Exploit via @everyone 
-        # Discord strictly forbids assigning 'Administrator' to @everyone. Doing so causes a silent failure.
+        # [SECURITY FIX]: Hard-block Administrator assignment for @everyone to prevent Discord API silent rejections
         for p in managed_perms:
             if role.name == "@everyone" and p == "administrator":
                 current_kwargs[p] = False
@@ -557,11 +556,11 @@ async def buy_premium(request: Request, guild_id: str):
     async with httpx.AsyncClient() as client:
         try:
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
-            resp = await client.post("https://api.paymento.io/v1/payment/request", headers={"Api-key": paymento_api_key, "Content-Type": "application/json", "Accept": "text/plain"}, json={"fiatAmount": str(amount), "fiatCurrency": "USD", "ReturnUrl": return_url, "orderId": order_id, "Speed": 1, "EmailAddress": "admin@sylas.ai"})
+            resp = await client.post("[https://api.paymento.io/v1/payment/request](https://api.paymento.io/v1/payment/request)", headers={"Api-key": paymento_api_key, "Content-Type": "application/json", "Accept": "text/plain"}, json={"fiatAmount": str(amount), "fiatCurrency": "USD", "ReturnUrl": return_url, "orderId": order_id, "Speed": 1, "EmailAddress": "admin@sylas.ai"})
             data = resp.json()
             if data.get("success"):
                 token = data.get("body")
-                payment_url = f"https://app.paymento.io/gateway?token={token}"
+                payment_url = f"[https://app.paymento.io/gateway?token=](https://app.paymento.io/gateway?token=){token}"
                 await payments.update_one({"internal_order_id": order_id}, {"$set": {"paymento_token": token}})
                 if payment_url: return RedirectResponse(payment_url, status_code=303)
         except Exception as e: print(f"Paymento API Error: {e}")
@@ -633,14 +632,14 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # [SECURITY FIX]: Use reliable fetch to bypass stale Member Cache evasion
+    # [SECURITY FIX]: Explicit target fetch to prevent cache drift vulnerability
     target = await get_reliable_member(guild, int(target_id))
     if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member: return RedirectResponse(f"/server/{guild_id}/permissions")
     
-    # 1: Web Admin Executing Power
+    # Layer 1: Admin Executing Power
     has_perm = False
     if action == "ban" and web_member.guild_permissions.ban_members: has_perm = True
     elif action == "kick" and web_member.guild_permissions.kick_members: has_perm = True
@@ -650,16 +649,15 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     tab = "bots" if target.bot else "users"
     
-    # 2: Hierarchy Protection
+    # Layer 2: Discord Hierarchy Protection
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
         
-    # [SECURITY FIX]: Administrator Immunity (Hard Block)
-    # Target administrators are inherently immune from being moderated via the web panel by anyone except the actual server owner.
+    # Layer 3: Administrator Web Dashboard Immunity
     if target.guild_permissions.administrator and guild.owner_id != web_member.id:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Administrators are immune to web dashboard moderation.&error_title=Protection Matrix", status_code=303)
 
-    # 3: Bot Executing Power
+    # Layer 4: Bot Internal Executing Power
     bot_has_perm = False
     if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
     elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
@@ -670,14 +668,14 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
     
-    # 4: API Hard Restrictions
+    # Layer 5: Discord API Absolute TimeOut Restriction
     if action == "timeout" and target.guild_permissions.administrator:
-        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API natively restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
         
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}" + (f"\n*Action triggered by Web Admin: {admin_name}*" if include_name else "")
     
-    # [SECURITY FIX]: BIFURCATED EXECUTION & FALSE-POSITIVE DM ROLLBACK
+    # [SECURITY FIX]: Bifurcated Message Dispatch and Rollback Protocol
     if action in ["kick", "ban"]:
         sent_dm = None
         if not target.bot:
@@ -696,7 +694,6 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
             return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
             
     elif action == "timeout":
-        # Timeouts preserve server membership, so we only send the DM *after* we are mathematically certain the API accepted the penalty.
         try:
             if timeout_duration > 40320 or timeout_duration < 1: raise ValueError("Duration exceeds 28-day API bounds")
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
