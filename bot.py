@@ -1,4 +1,4 @@
-import os, asyncio, discord, random
+import os, asyncio, discord, random, datetime
 from discord.ext import commands
 from ai import get_preloaded_payloads
 from db import payload_armory
@@ -11,10 +11,12 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 engine_state = {"active": True}
 active_wargames = {}
 
-# MEMORY LEAK FIX: We now only store lightweight IDs, not heavy discord.Message objects
 pending_dropdowns = {} 
 active_guild_sessions = set() 
 startraid_abort_confirm = {} 
+
+# Menu Anti-Spam Cooldown Tracker
+startraid_cooldowns = {}
 
 class PremiumUpgradeView(discord.ui.View):
     def __init__(self, guild_id):
@@ -48,7 +50,6 @@ class RaidSelect(discord.ui.Select):
             await interaction.response.send_message(f"⏳ **Protocol on Cooldown.**\n**Time Remaining:** {time_left}", ephemeral=True)
             return
 
-        # COOLDOWN RACE CONDITION FIX: Apply cooldown immediately before the Wargame begins to prevent double-spending.
         await set_cooldown(guild_id, selected_raid)
 
         pending_dropdowns.pop(interaction.message.id, None)
@@ -85,11 +86,48 @@ async def start_raid(interaction: discord.Interaction):
         await interaction.response.send_message("❌ **Engine Offline.**", ephemeral=True)
         return
 
+    now = datetime.datetime.utcnow()
+    guild_id = interaction.guild.id
+
+    # --- TIERED MENU COOLDOWN LOGIC ---
+    from db import guild_premium
+    prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
+    
+    cooldown_seconds = 60 # Default free tier
+    if prem_doc and "expires_at" in prem_doc:
+        exp = prem_doc["expires_at"]
+        if isinstance(exp, str):
+            try: exp = datetime.datetime.fromisoformat(exp)
+            except: exp = now - datetime.timedelta(days=1)
+        
+        if exp > now:
+            updated = prem_doc.get("updated_at", now)
+            if isinstance(updated, str):
+                try: updated = datetime.datetime.fromisoformat(updated)
+                except: updated = now
+            
+            # If the duration they bought was >= 360 days, it's a Yearly sub
+            if (exp - updated).days >= 360:
+                cooldown_seconds = 0
+            else:
+                cooldown_seconds = 15
+
+    last_used = startraid_cooldowns.get(guild_id)
+    if last_used:
+        elapsed = (now - last_used).total_seconds()
+        if elapsed < cooldown_seconds:
+            remaining = int(cooldown_seconds - elapsed)
+            await interaction.response.send_message(f"⏳ **Menu on Cooldown.**\nPlease wait {remaining} seconds before initiating another deployment.", ephemeral=True)
+            return
+            
+    startraid_cooldowns[guild_id] = now
+    # ----------------------------------
+
     if interaction.guild.id in active_guild_sessions:
-        now = discord.utils.utcnow()
+        now_ts = discord.utils.utcnow()
         last_attempt = startraid_abort_confirm.get(interaction.guild.id)
         
-        if last_attempt and (now - last_attempt).total_seconds() < 15:
+        if last_attempt and (now_ts - last_attempt).total_seconds() < 15:
             startraid_abort_confirm.pop(interaction.guild.id, None)
             
             for game_id, wargame in list(active_wargames.items()):
@@ -106,7 +144,7 @@ async def start_raid(interaction: discord.Interaction):
             await interaction.response.send_message("🛑 **Active wargame terminated.**", ephemeral=True, delete_after=10.0)
             return
         else:
-            startraid_abort_confirm[interaction.guild.id] = now
+            startraid_abort_confirm[interaction.guild.id] = now_ts
             await interaction.response.send_message("⚠️ **A wargame is already active.** Type `/startraid` again to abort, or `/endraid`.", ephemeral=True, delete_after=15.0)
             return
 
@@ -120,7 +158,6 @@ async def start_raid(interaction: discord.Interaction):
     await dropdown_msg.edit(view=view)
     view.message = dropdown_msg
     
-    # MEMORY LEAK FIX: Store metadata, not the object.
     pending_dropdowns[dropdown_msg.id] = {
         "guild_id": interaction.guild.id,
         "channel_id": interaction.channel_id
@@ -175,7 +212,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     random.shuffle(all_payloads)
     
     try:
-        # WEBHOOK RATE LIMIT FIX: We now recycle webhooks instead of creating/deleting them constantly.
         webhook = None
         existing_webhooks = await channel.webhooks()
         for wh in existing_webhooks:
@@ -197,7 +233,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         
         for p in all_payloads:
             try:
-                # Dynamically inject the fake username onto the recycled webhook
                 msg = await webhook.send(content=p["spam_message"], username=p["username"], wait=True)
                 spawned_msgs.append(msg)
                 active_wargames[game_id]["msg_map"][msg.id] = p["is_malicious"]
@@ -240,7 +275,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             try: await status_msg.delete()
             except: pass
 
-            # COOLDOWN REFUND: If a wargame is cancelled before any actions occur, we refund the cooldown.
             if wargame.get("attempts", 0) == 0:
                 from db import guild_cooldowns
                 await guild_cooldowns.delete_one({"guild_id": str(wargame["guild_id"]), "raid_type": wargame["raid_type"]})
@@ -254,20 +288,16 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         for msg in spawned_msgs:
             try: await msg.delete()
             except: pass
-            
-        # Notice: `await webhook.delete()` has been intentionally removed to protect your rate limits.
 
         try: await dropdown_msg.delete()
         except: pass
         try: await original_cmd_msg.delete()
         except: pass
 
-# RAW EVENT LISTENER: Bypasses Discord's internal cache limits to guarantee interception
 @bot.event
 async def on_raw_message_delete(payload):
     message_id = payload.message_id
 
-    # --- UI DELETION NOTIFICATION FIX ---
     if message_id in pending_dropdowns:
         meta = pending_dropdowns.pop(message_id)
         if meta["guild_id"] in active_guild_sessions:
@@ -280,7 +310,6 @@ async def on_raw_message_delete(payload):
         except Exception as e: 
             print(f"Failed to send abort msg: {e}")
         return
-    # ------------------------------------
 
     for game_id, wargame in list(active_wargames.items()):
         if message_id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
