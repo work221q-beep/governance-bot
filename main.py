@@ -11,33 +11,32 @@ from premium import is_guild_premium
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# --- DYNAMIC DURATION FORMATTER ---
+# --- DYNAMIC GRAMMATICAL DURATION FORMATTER ---
 def format_duration(days_float):
     try:
         days_float = float(days_float)
     except (ValueError, TypeError):
         return "0 Mins"
         
+    def fmt(val, sing, plur):
+        n = int(val) if val.is_integer() else round(val, 2)
+        return f"{n} {sing if n == 1 else plur}"
+        
     if days_float >= 365:
-        val = days_float / 365.0
-        return f"{int(val) if val.is_integer() else round(val, 2)} year"
+        return fmt(days_float / 365.0, "Year", "Years")
     elif days_float >= 30:
-        val = days_float / 30.0
-        return f"{int(val) if val.is_integer() else round(val, 2)} month"
+        return fmt(days_float / 30.0, "Month", "Months")
     elif days_float >= 7:
-        val = days_float / 7.0
-        return f"{int(val) if val.is_integer() else round(val, 2)} week"
+        return fmt(days_float / 7.0, "Week", "Weeks")
     elif days_float >= 1:
-        return f"{int(days_float) if days_float.is_integer() else round(days_float, 2)} Days"
+        return fmt(days_float, "Day", "Days")
     elif days_float >= (1/24.0):
-        val = days_float * 24.0
-        return f"{int(val) if val.is_integer() else round(val, 2)} Hours"
+        return fmt(days_float * 24.0, "Hour", "Hours")
     else:
-        val = days_float * 1440.0
-        return f"{int(val) if val.is_integer() else round(val, 2)} Mins"
+        return fmt(days_float * 1440.0, "Min", "Mins")
 
 templates.env.globals["format_duration"] = format_duration
-# ----------------------------------
+# ----------------------------------------------
 
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
@@ -389,7 +388,6 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     guild_payments = await payments.find({"guild_id": str(guild_id), "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]}).sort("created_at", -1).to_list(100)
     
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
-    # FIXED: Added "Z" for correct client side parsing
     premium_expires_at = prem_doc["expires_at"].isoformat() + "Z" if prem_doc and "expires_at" in prem_doc else None
     
     unacknowledged_key = await license_keys.find_one({"purchased_by": str(session_user.get("id")), "used": False, "acknowledged": False})
@@ -466,7 +464,6 @@ async def apply_sync_post(request: Request, guild_id: str):
                 await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Infrastructure Sync")
                 await asyncio.sleep(0.3)
             except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Bot lacks permission to edit role {role.name}.')}&error_title=Bot Permission Error", status_code=303)
-            # FIX: Secured the f-string variable by properly closing the brace
             except Exception as e: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Failed to edit role {role.name}: {str(e)[:100]}')}&error_title=Error", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
@@ -483,7 +480,6 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     from db import guild_premium, license_keys
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
     
-    # FIXED: Added "Z" for correct client side parsing
     premium_expires_at = prem_doc["expires_at"].isoformat() + "Z" if prem_doc and "expires_at" in prem_doc else None
 
     unacknowledged_key = await license_keys.find_one({"purchased_by": str(session_user.get("id")), "used": False, "acknowledged": False})
@@ -953,8 +949,6 @@ async def admin_generate_key(request: Request):
     if not await check_admin_auth(request): return RedirectResponse("/")
     form = await request.form()
     preset = form.get("duration_preset", "30")
-    
-    # [FIX]: Secured float casting against malformed admin injection attacks
     if preset == "custom":
         try:
             val = float(form.get("custom_val", 1))
@@ -962,16 +956,16 @@ async def admin_generate_key(request: Request):
             if unit == "minutes": days = val / 1440.0
             elif unit == "hours": days = val / 24.0
             elif unit == "days": days = val
-            elif unit == "week": days = val * 7.0
-            elif unit == "month": days = val * 30.0
-            elif unit == "year": days = val * 365.0
+            elif unit == "weeks": days = val * 7.0
+            elif unit == "months": days = val * 30.0
+            elif unit == "years": days = val * 365.0
             else: days = val
         except ValueError: days = 1.0
     else:
         try: 
             days = float(preset)
         except ValueError:
-            days = 30.0  # Safe default if parameter is manipulated
+            days = 30.0 
             
     from premium import generate_license_key
     await generate_license_key(days) 
