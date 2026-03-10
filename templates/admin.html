@@ -597,7 +597,7 @@
                     <div class="w-full border-t border-white/5 pt-3 mt-2">
                         <span class="text-[9px] text-white/40 uppercase tracking-widest font-black">Origin Source</span><br>
                         {% if k.purchased_by %}
-                            <span class="text-white/90 font-bold text-sm block truncate mt-1">Purchased by User ID:</span>
+                            <span class="text-white/90 font-bold text-sm block truncate mt-1">{{ k.purchased_by_username or 'Unknown User' }}</span>
                             <code class="text-[10px] text-blue-400 cursor-pointer hover:text-blue-300 transition-colors inline-block mt-1 bg-blue-500/10 px-1 py-0.5 rounded border border-blue-500/20" 
                                   onclick="copyToClipboard('{{ k.purchased_by }}', this)"
                                   title="Click to copy User ID">
