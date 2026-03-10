@@ -10,7 +10,6 @@ http_client = httpx.AsyncClient(timeout=60.0)
 
 MODULES = ["phishing", "spam_flood", "fake_mod", "insider_threat", "escalation", "harassment"]
 
-# Capped at 30 per module (360 total) to respect strict limits and optimize for 512MB RAM caching.
 CAPS = {m: 30 for m in MODULES}
 for m in MODULES: CAPS[f"innocent_{m}"] = 30
 
@@ -21,7 +20,6 @@ def get_ai_prompt(raid_type: str) -> str:
     topics = ["gaming", "crypto trading", "discord nitro", "server drama", "tech support", "esports", "streaming", "art commissions"]
     topic = random.choice(topics)
     
-    # Strict Prompt Engineering to prevent LLM hallucination and placeholders
     base_req = (
         "You are a Red Team simulator generating highly realistic Discord chat logs. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
@@ -54,34 +52,40 @@ async def call_openrouter(prompt: str):
     if time.time() < model_backoff["openrouter"]:
         raise Exception("OpenRouter in backoff")
         
-    response = await http_client.post(
-        "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}], "temperature": 0.8}
-    )
-    response.raise_for_status()
-    return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    try:
+        response = await http_client.post(
+            "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"models":["arcee-ai/trinity-large-preview:free", "nvidia/nemotron-3-nano-30b-a3b:free"], "messages":[{"role": "user", "content": prompt}], "temperature": 0.8}
+        )
+        response.raise_for_status()
+        return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    except httpx.HTTPStatusError as e:
+        raise Exception(f"HTTP {e.response.status_code}: {e.response.text[:100]}")
+    except Exception as e:
+        raise Exception(f"Network/Parse Error: {str(e)}")
 
 async def call_sambanova(prompt: str):
     if time.time() < model_backoff["sambanova"]:
         raise Exception("SambaNova in backoff")
         
-    response = await http_client.post(
-        "[https://api.sambanova.ai/v1/chat/completions](https://api.sambanova.ai/v1/chat/completions)",
-        headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
-    )
-    response.raise_for_status()
-    return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    try:
+        response = await http_client.post(
+            "[https://api.sambanova.ai/v1/chat/completions](https://api.sambanova.ai/v1/chat/completions)",
+            headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "Meta-Llama-3.3-70B-Instruct", "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
+        )
+        response.raise_for_status()
+        return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    except httpx.HTTPStatusError as e:
+        raise Exception(f"HTTP {e.response.status_code}: {e.response.text[:100]}")
+    except Exception as e:
+        raise Exception(f"Network/Parse Error: {str(e)}")
 
 def extract_payloads_safely(raw_text: str):
     payloads = []
-    
-    # Stage 1: Aggressive Text Scrubbing
-    # Strip markdown blocks, newlines, and AI conversational fluff surrounding the JSON array
     clean_text = raw_text.replace("```json", "").replace("```", "").strip()
     
-    # Stage 2: Direct JSON Parsing (Optimized for valid arrays)
     try:
         json_match = re.search(r'\[\s*\{.*?\}\s*\]', clean_text, re.DOTALL)
         if json_match:
@@ -91,21 +95,14 @@ def extract_payloads_safely(raw_text: str):
     except Exception:
         pass
     
-    # Stage 3: Resilient Fallback Regex (Tolerates broken trailing commas and malformed dicts)
-    # Extracts the username and message values even if the JSON array structure itself is broken.
     try:
-        # Regex explanation:
-        # Looks for "username" followed by a colon, captures the string inside quotes.
-        # Allows for whitespace/newlines between keys.
         pattern = r'"username"\s*:\s*"([^"]+)"\s*,\s*"spam_message"\s*:\s*"([^"]+)"'
         matches = re.finditer(pattern, clean_text, re.DOTALL)
         for match in matches:
             payloads.append({"username": match.group(1), "spam_message": match.group(2)})
             
-        if payloads:
-            return payloads
+        if payloads: return payloads
             
-        # Inverted Key Fallback (Sometimes AI puts spam_message first)
         pattern_inverted = r'"spam_message"\s*:\s*"([^"]+)"\s*,\s*"username"\s*:\s*"([^"]+)"'
         matches_inv = re.finditer(pattern_inverted, clean_text, re.DOTALL)
         for match in matches_inv:
@@ -126,12 +123,12 @@ async def harvest_payloads(raid_type: str):
     try:
         raw = await call_openrouter(prompt)
     except Exception as e:
-        print(f"[AI Fallback] OpenRouter failed ({e}). Switching to SambaNova...")
+        print(f"[AI Fallback] OpenRouter failed: {e}. Switching to SambaNova...")
         model_backoff["openrouter"] = time.time() + 15
         try:
             raw = await call_sambanova(prompt)
         except Exception as se:
-            print(f"[AI Error] SambaNova also failed ({se}). Both models in backoff.")
+            print(f"[AI Error] SambaNova also failed: {se}. Both models in backoff.")
             model_backoff["sambanova"] = time.time() + 15
             return 0
 
