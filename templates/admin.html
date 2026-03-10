@@ -541,12 +541,28 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             <div class="bg-black/40 border border-white/5 p-6 rounded-xl">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2">Generate License Key</h4>
-                <form method="post" action="/admin/generate_key" class="flex gap-3">
-                    <select name="days" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-bold text-sm flex-1 focus:outline-none focus:border-purple-500 appearance-none">
-                        <option value="30">Monthly (30 Days)</option>
-                        <option value="365">Yearly (365 Days)</option>
-                    </select>
-                    <button type="submit" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600 hover:text-white px-6 py-3 rounded-lg font-bold transition-all text-sm">Generate</button>
+                <form method="post" action="/admin/generate_key" class="flex flex-col gap-3">
+                    <div class="flex gap-3">
+                        <select name="duration_preset" id="duration_preset" onchange="document.getElementById('custom_key_div').classList.toggle('hidden', this.value !== 'custom')" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-bold text-sm flex-1 focus:outline-none focus:border-purple-500 appearance-none cursor-pointer">
+                            <option value="1">24 Hours (1 Day)</option>
+                            <option value="7">Weekly (7 Days)</option>
+                            <option value="30" selected>Monthly (30 Days)</option>
+                            <option value="365">Yearly (365 Days)</option>
+                            <option value="custom">Custom Duration...</option>
+                        </select>
+                        <button type="submit" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600 hover:text-white px-6 py-3 rounded-lg font-bold transition-all text-sm h-fit shadow-[0_0_15px_rgba(147,51,234,0.1)]">Generate</button>
+                    </div>
+                    <div id="custom_key_div" class="hidden flex gap-3 fade-in">
+                        <input type="number" name="custom_val" value="1" min="0.01" step="any" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-mono flex-1 text-sm focus:outline-none focus:border-purple-500" placeholder="Amount">
+                        <select name="custom_unit" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-bold text-sm flex-1 focus:outline-none focus:border-purple-500 cursor-pointer">
+                            <option value="minutes">Minutes</option>
+                            <option value="hours">Hours</option>
+                            <option value="days" selected>Days</option>
+                            <option value="weeks">Weeks</option>
+                            <option value="months">Months</option>
+                            <option value="years">Years</option>
+                        </select>
+                    </div>
                 </form>
             </div>
             
@@ -569,15 +585,27 @@
                     Active Keys <span class="text-cyan-400">{{ active_keys|length }}</span>
                 </h4>
                 {% for k in active_keys %}
-                <div class="key-item bg-black/40 border border-white/5 p-4 rounded-lg flex justify-between items-center">
-                    <div>
+                <div class="key-item bg-black/40 border border-white/5 p-4 rounded-lg flex flex-col items-start opacity-80 hover:opacity-100 transition-opacity">
+                    <div class="flex justify-between items-center w-full">
                         <p title="Click to copy Key" onclick="copyToClipboard('{{ k.key }}', this)" class="text-cyan-400 font-mono text-sm font-bold tracking-wider cursor-pointer hover:text-emerald-400 transition-colors select-none">
                             {{ k.key }}
                         </p>
-                        <p class="text-white/40 text-[10px] mt-1">Duration: {{ k.duration_days }} Days | Expires: {{ k.expires_at.strftime('%Y-%m-%d') if k.expires_at else 'N/A' }}</p>
-                    </div>
-                    <div>
                         <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[9px] font-bold uppercase tracking-widest">Valid</span>
+                    </div>
+                    <p class="text-white/40 text-[10px] mt-1 mb-3">Duration: {{ k.duration_days }} Days | Expires: {{ k.expires_at.strftime('%Y-%m-%d') if k.expires_at else 'N/A' }}</p>
+                    
+                    <div class="w-full border-t border-white/5 pt-3 mt-2">
+                        <span class="text-[9px] text-white/40 uppercase tracking-widest font-black">Origin Source</span><br>
+                        {% if k.purchased_by %}
+                            <span class="text-white/90 font-bold text-sm block truncate mt-1">Purchased by User ID:</span>
+                            <code class="text-[10px] text-blue-400 cursor-pointer hover:text-blue-300 transition-colors inline-block mt-1 bg-blue-500/10 px-1 py-0.5 rounded border border-blue-500/20" 
+                                  onclick="copyToClipboard('{{ k.purchased_by }}', this)"
+                                  title="Click to copy User ID">
+                                {{ k.purchased_by }}
+                            </code>
+                        {% else %}
+                            <span class="text-purple-400/80 italic text-sm block mt-1 font-bold">Admin Generated</span>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
