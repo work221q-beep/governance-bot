@@ -91,40 +91,42 @@ async def keep_awake_loop():
             print(f"[Cleanup Error] {e}")
 
 async def payment_reconciliation_loop():
-    """Aggressive autonomous daemon that verifies dropped webhooks in the background."""
+    """Autonomous daemon that verifies dropped webhooks safely without triggering API rate limits."""
     from db import payments
     await asyncio.sleep(10)
     
     while True:
         try:
-            yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            # FAST SWEEP: Wait only 30 seconds after creation instead of 2 minutes
-            grace_period = datetime.datetime.utcnow() - datetime.timedelta(seconds=30)
+            now = datetime.datetime.utcnow()
+            # SECURITY FIX: Cap sweep to 2 hours instead of 24 to prevent memory/API exhaustion.
+            cutoff = now - datetime.timedelta(hours=2)
+            grace_period = now - datetime.timedelta(seconds=60)
             
             stuck_payments = await payments.find({
                 "status": "pending",
                 "paymento_token": {"$exists": True},
-                "created_at": {"$gt": yesterday, "$lt": grace_period}
-            }).to_list(50)
+                "created_at": {"$gt": cutoff, "$lt": grace_period}
+            }).to_list(20) # Lowered batch size to prevent API throttling
             
             for payment in stuck_payments:
                 await verify_and_fulfill_payment(payment["paymento_token"])
-                await asyncio.sleep(1) 
+                await asyncio.sleep(1.5) # Anti-rate-limit delay
+                
         except Exception as e:
             print(f"[Reconciliation Daemon] Error: {e}")
             
-        # Run the check every 30 seconds instead of 60
-        await asyncio.sleep(30) 
+        await asyncio.sleep(60) # Sweep every 60 seconds
 
-async def verify_and_fulfill_payment(token: str):
+async def verify_and_fulfill_payment(token: str, webhook_status: str = None):
     from db import payments, license_keys
     from premium import generate_license_key
     
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
-    if not paymento_api_key: return None
+    if not paymento_api_key: 
+        return None
 
-    # VITAL: 3.0 second timeout to protect your 512MB RAM
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    # VULNERABILITY FIX: Increased timeout to 20.0 seconds to prevent silent drops.
+    async with httpx.AsyncClient(timeout=20.0) as client:
         try:
             verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={
                 "Api-key": paymento_api_key,
@@ -135,28 +137,32 @@ async def verify_and_fulfill_payment(token: str):
             if verify_data.get("success") and "body" in verify_data:
                 body_data = verify_data["body"]
                 trusted_order_id = body_data.get("orderId")
-                order_status = str(body_data.get("orderStatus", body_data.get("status", "")))
                 
-                if not trusted_order_id: return None
+                # LOGIC FIX: Fallback to the securely verified webhook status if the Verify API omits it.
+                # Paymento documentation states status 7 represents a blockchain-confirmed payment.
+                order_status = str(body_data.get("orderStatus", body_data.get("status", webhook_status or "")))
+                
+                if not trusted_order_id: 
+                    return None
 
                 payment = await payments.find_one({"internal_order_id": trusted_order_id})
-                if not payment: return None
+                if not payment: 
+                    return None
 
-                # STRICT SECURITY: Require full 3/3 Blockchain Confirmation (Status 7)
                 if order_status == "7":
                     if payment["status"] == "paid":
                         return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
 
-                    # ATOMIC LOCK: Prevents double-spending
+                    # ATOMIC LOCK: Prevents double-spending race conditions.
                     update_result = await payments.update_one(
                         {"_id": payment["_id"], "status": "pending"}, 
                         {"$set": {"status": "paid"}}
                     )
                     
                     if update_result.modified_count == 1:
-                        # Mint the token
+                        # Mint the token and bind it to the user.
                         key = await generate_license_key(payment["days"])
-                        # Secure it to their account
+                        
                         await license_keys.update_one(
                             {"key": key},
                             {"$set": {
@@ -164,27 +170,22 @@ async def verify_and_fulfill_payment(token: str):
                                 "purchased_by": str(payment.get("user_id", "")),
                                 "internal_order_id": payment["internal_order_id"],
                                 "duration_days": payment["days"],
-                                "acknowledged": False, # Triggers your popup
+                                "acknowledged": False, # Triggers your frontend UI popup
                                 "shown_count": 0
                             }}
                         )
                         return await license_keys.find_one({"key": key})
                         
-                # Status 5 = Explicitly Canceled / Expired by gateway
-                elif order_status == "5":
+                # Handle explicitly canceled, timed out, or rejected statuses.
+                elif order_status in ["4", "5", "9"]:
                     await payments.update_one({"_id": payment["_id"]}, {"$set": {"status": "canceled"}})
                     return None
                     
-                # Status 0, 1, 2, 3 = STILL CONFIRMING ON BLOCKCHAIN
-                # Do NOT cancel. Return None so the aggressive background daemon keeps checking it.
-                else:
-                    return None
-                    
         except httpx.TimeoutException:
-            # Silent fail on timeout; background daemon will retry it safely
-            pass
+            print(f"[Payment Matrix] Warning: Verification timeout for token {token}. Daemon will retry.")
         except Exception as e:
-            print(f"Payment Verification Failed: {e}")
+            print(f"[Payment Matrix] Verification Failed: {e}")
+            
     return None
 
 async def jit_payment_reconciliation(user_id: str):
@@ -698,17 +699,15 @@ async def buy_premium(request: Request, guild_id: str):
     async with httpx.AsyncClient() as client:
         try:
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
-            webhook_url = f"{base_url}/api/webhook/paymento" 
             
             resp = await client.post("https://api.paymento.io/v1/payment/request", headers={
                 "Api-key": paymento_api_key,
                 "Content-Type": "application/json",
-                "Accept": "text/plain"
+                "Accept": "application/json"
             }, json={
                 "fiatAmount": str(amount),
                 "fiatCurrency": "USD",
                 "ReturnUrl": return_url,
-                "WebhookUrl": webhook_url, 
                 "orderId": order_id,
                 "Speed": 1, 
                 "EmailAddress": "admin@sylas.ai"
@@ -731,8 +730,8 @@ async def buy_premium(request: Request, guild_id: str):
             
     return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway unavailable. Try again later.", status_code=303)
 
-async def process_payment_bg(token: str):
-    await verify_and_fulfill_payment(token)
+async def process_payment_bg(token: str, webhook_status: str = None):
+    await verify_and_fulfill_payment(token, webhook_status)
 
 @app.post("/api/webhook/paymento")
 async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
@@ -758,10 +757,11 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
         return HTMLResponse("Invalid JSON", status_code=400)
 
     token = payload.get("Token") or payload.get("token")
-    order_status = payload.get("OrderStatus") or payload.get("orderStatus")
+    order_status = str(payload.get("OrderStatus") or payload.get("orderStatus", ""))
 
-    if str(order_status) == "7" and token:
-        bg_tasks.add_task(process_payment_bg, token)
+    # Trigger processing strictly for blockchain-confirmed status (7)
+    if order_status == "7" and token:
+        bg_tasks.add_task(process_payment_bg, token, order_status)
         return HTMLResponse("Accepted for background processing", status_code=200)
 
     return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
