@@ -647,12 +647,17 @@
                         const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
                         const minutes = Math.floor((diff / 1000 / 60) % 60);
                         
+                        // [FIX]: Ensure precise grammatical equality output
+                        const dStr = days === 1 ? "Day" : "Days";
+                        const hStr = hours === 1 ? "Hour" : "Hours";
+                        const mStr = minutes === 1 ? "Min" : "Mins";
+                        
                         if (days > 0) { 
-                            el.textContent = `${days} Days, ${hours} Hours`; 
+                            el.textContent = `${days} ${dStr}, ${hours} ${hStr}`; 
                         } else if (hours > 0) { 
-                            el.textContent = `${hours} Hours, ${minutes} Mins`; 
+                            el.textContent = `${hours} ${hStr}, ${minutes} ${mStr}`; 
                         } else { 
-                            el.textContent = `${minutes} Mins`; 
+                            el.textContent = `${minutes} ${mStr}`; 
                         }
                     }
                     setInterval(updateBillingCountdown, 60000); 
