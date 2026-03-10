@@ -152,6 +152,7 @@ async def verify_and_fulfill_payment(token: str):
                         {"$set": {
                             "used": False,
                             "purchased_by": str(payment.get("user_id", "")),
+                            "purchased_by_username": payment.get("username", "Unknown"), 
                             "internal_order_id": payment["internal_order_id"],
                             "duration_days": payment["days"],
                             "acknowledged": False, # <--- TRIGGERS THE UI POPUP
