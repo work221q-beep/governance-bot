@@ -641,13 +641,20 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     elif guild.me.guild_permissions.administrator: bot_has_perm = True
     if not bot_has_perm: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas lacks permissions to perform this action. Check bot settings.&error_title=Bot Permission Error", status_code=303)
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role: return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
+    
+    # [SECURITY FIX]: Hard pre-flight block for Discord's un-timeoutable Administrator permission restriction
+    if action == "timeout" and target.guild_permissions.administrator:
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
+        
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
-    from db import db
-    await db.audit_logs.insert_one({ "action": action, "guild_id": guild_id, "target_id": target_id, "admin_id": session_user.get("id"), "reason": custom_reason, "timestamp": datetime.datetime.utcnow() })
     dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}" + (f"\n*Action triggered by Web Admin: {admin_name}*" if include_name else "")
+    
+    # Send the DM first to ensure delivery before server access is revoked via Kick/Ban
+    sent_dm = None
     if not target.bot:
-        try: await target.send(dm_message)
+        try: sent_dm = await target.send(dm_message)
         except discord.Forbidden: pass
+        
     try:
         if action == "kick": await target.kick(reason=audit_log_reason)
         elif action == "ban": await target.ban(reason=audit_log_reason)
@@ -655,8 +662,17 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
             if timeout_duration > 40320 or timeout_duration < 1: raise ValueError("Duration exceeds 28-day API bounds")
             await target.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=timeout_duration), reason=audit_log_reason)
     except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
+        # [SECURITY FIX]: If the mutation fails, rollback the false-positive DM from the user's inbox
+        if sent_dm:
+            try: await sent_dm.delete()
+            except: pass
         error_safe = urllib.parse.quote(str(e)[:150])
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
+
+    # Only log to DB after successful API execution
+    from db import db
+    await db.audit_logs.insert_one({ "action": action, "guild_id": guild_id, "target_id": target_id, "admin_id": session_user.get("id"), "reason": custom_reason, "timestamp": datetime.datetime.utcnow() })
+    
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/override")
