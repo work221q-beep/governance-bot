@@ -16,7 +16,10 @@ active_wargames = {}
 pending_dropdowns = {} 
 active_guild_sessions = set() 
 startraid_abort_confirm = {} 
-post_raid_cooldowns = {} # Tracks the hardware cooldown after a session terminates
+post_raid_cooldowns = {} 
+
+# --- PURGE DEBOUNCE TRACKER ---
+channel_delete_activity = {}
 
 async def get_menu_cooldown(guild_id: int) -> int:
     """Calculates the anti-spam menu cooldown based on premium tier."""
@@ -38,13 +41,45 @@ async def get_menu_cooldown(guild_id: int) -> int:
                 except: updated = now
             if updated.tzinfo: updated = updated.replace(tzinfo=None)
             
-            # Yearly Enterprise tier (>= 360 days) = 0s cooldown
             if (exp - updated).days >= 360:
                 return 0
-            # Standard Premium = 15s cooldown
             return 15
-    # Free Tier = 60s cooldown
     return 60
+
+async def send_delayed_notice(channel_id: int, content: str = None, embed: discord.Embed = None):
+    """
+    Adaptive Debounce Task: Waits for a channel to experience 2.5 seconds of absolute silence 
+    (meaning external purges are finished) before broadcasting critical notices.
+    """
+    start_time = asyncio.get_event_loop().time()
+    
+    while True:
+        now = asyncio.get_event_loop().time()
+        
+        # Hard fallback: Prevent infinite loops in wildly active channels
+        if now - start_time > 60.0:
+            break
+            
+        last_activity = channel_delete_activity.get(channel_id, 0)
+        elapsed = now - last_activity
+        
+        # If no messages have been deleted in the last 2.5 seconds, the purge is over.
+        if elapsed >= 2.5:
+            break
+            
+        await asyncio.sleep(0.5)
+        
+    channel = bot.get_channel(channel_id)
+    if channel:
+        try:
+            if content and embed:
+                await channel.send(content=content, embed=embed, delete_after=15.0)
+            elif content:
+                await channel.send(content=content, delete_after=15.0)
+            elif embed:
+                await channel.send(embed=embed, delete_after=15.0)
+        except Exception:
+            pass
 
 class PremiumUpgradeView(discord.ui.View):
     def __init__(self, guild_id):
@@ -65,6 +100,12 @@ class RaidSelect(discord.ui.Select):
         super().__init__(placeholder="Select a Training Protocol...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        if interaction.message.id not in pending_dropdowns:
+            await interaction.response.send_message("🛑 **Expired Menu.** This session was terminated or timed out.", ephemeral=True)
+            try: await interaction.message.delete()
+            except: pass
+            return
+
         selected_raid = self.values[0]
         guild_id = interaction.guild.id
         
@@ -73,13 +114,11 @@ class RaidSelect(discord.ui.Select):
             await interaction.response.send_message("🛑 **Premium Security Feature.**\nPlease purchase a license.", ephemeral=True, view=PremiumUpgradeView(guild_id))
             return 
 
-        # Global Database Wargame Cooldown Check (4H/24H)
         allowed, time_left = await check_cooldown(guild_id, selected_raid, is_prem)
         if not allowed:
             await interaction.response.send_message(f"⏳ **Protocol on Cooldown.**\n**Time Remaining:** {time_left}", ephemeral=True)
             return
 
-        # Wargame execution initiates; record the specific module CD
         await set_cooldown(guild_id, selected_raid)
 
         pending_dropdowns.pop(interaction.message.id, None)
@@ -95,7 +134,6 @@ class RaidView(discord.ui.View):
 
     async def on_timeout(self):
         guild_id = self.original_cmd_msg.guild.id
-        # Cleanup active sessions and mandate hardware cooldown on menu timeout
         if guild_id in active_guild_sessions:
             active_guild_sessions.remove(guild_id)
             post_raid_cooldowns[guild_id] = datetime.datetime.utcnow()
@@ -122,43 +160,37 @@ async def start_raid(interaction: discord.Interaction):
     now = datetime.datetime.utcnow()
     guild_id = interaction.guild.id
 
-    # 1. STATE MACHINE: ACTIVE SESSION (Double-Tap Abort Logic)
     if guild_id in active_guild_sessions:
         last_attempt = startraid_abort_confirm.get(guild_id)
         
-        # Phase 2: Double-tap confirmed within 15 seconds
         if last_attempt and (now - last_attempt).total_seconds() < 15:
             startraid_abort_confirm.pop(guild_id, None)
             
-            # Kill running wargame logic
             for game_id, wargame in list(active_wargames.items()):
                 channel = bot.get_channel(wargame["channel_id"])
                 if channel and channel.guild.id == guild_id: 
                     wargame["cancelled"] = True
                     
-            # Wipe unselected UI Dropdowns
             to_remove = []
             for msg_id, meta in pending_dropdowns.items():
                 if meta["guild_id"] == guild_id:
                     to_remove.append(msg_id)
+                    try: await meta["message"].delete()
+                    except: pass
             for m_id in to_remove: 
                 pending_dropdowns.pop(m_id, None)
                 
             active_guild_sessions.discard(guild_id)
-            
-            # ENFORCE HARDWARE COOLDOWN POST-ABORT
             post_raid_cooldowns[guild_id] = now
             
             await interaction.response.send_message("🛑 **Active wargame terminated.**", ephemeral=True, delete_after=10.0)
             return
             
-        # Phase 1: First spam attempt (Send warning)
         else:
             startraid_abort_confirm[guild_id] = now
             await interaction.response.send_message("⚠️ **A wargame is already active.** Type `/startraid` again to abort, or `/endraid`.", ephemeral=True, delete_after=15.0)
             return
 
-    # 2. STATE MACHINE: IDLE SESSION (Menu Spawning & Cooldown Enforcement)
     last_ended = post_raid_cooldowns.get(guild_id)
     if last_ended:
         cooldown_seconds = await get_menu_cooldown(guild_id)
@@ -169,7 +201,6 @@ async def start_raid(interaction: discord.Interaction):
             await interaction.response.send_message(f"⏳ **Engine Cooling Down.**\nPlease wait {remaining} seconds before initiating another deployment.", ephemeral=True)
             return
 
-    # Clear to deploy
     active_guild_sessions.add(guild_id)
     embed = discord.Embed(title="👻 SYLAS TRAINING ENGINE", description="**Select a Wargame to deploy.**\n\nDeployment drops an unknown mix of AI threats and contextual false positives.", color=discord.Color.dark_gray())
     
@@ -182,7 +213,8 @@ async def start_raid(interaction: discord.Interaction):
     
     pending_dropdowns[dropdown_msg.id] = {
         "guild_id": guild_id,
-        "channel_id": interaction.channel_id
+        "channel_id": interaction.channel_id,
+        "message": dropdown_msg
     }
 
 @bot.tree.command(name="endraid", description="Forcefully terminate an active wargame")
@@ -204,11 +236,12 @@ async def end_raid(interaction: discord.Interaction):
     for msg_id, meta in pending_dropdowns.items():
         if meta["guild_id"] == guild_id:
             to_remove.append(msg_id)
+            try: await meta["message"].delete()
+            except: pass
     for m_id in to_remove: 
         pending_dropdowns.pop(m_id, None)
 
     active_guild_sessions.discard(guild_id)
-    # Mandate Hardware Cooldown
     post_raid_cooldowns[guild_id] = datetime.datetime.utcnow()
 
     if killed_active_game: 
@@ -277,7 +310,6 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     except Exception as e:
         print(f"Wargame Execution Error: {e}")
     finally:
-        # Mandatory Final Cleanup Loop
         active_guild_sessions.discard(guild_id)
         post_raid_cooldowns[guild_id] = datetime.datetime.utcnow()
             
@@ -300,20 +332,21 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             try: 
                 await status_msg.edit(embed=final_embed)
                 await status_msg.delete(delay=15.0)
-            except: pass
+            except Exception: 
+                # Fallback: if the status message was somehow wiped, queue the debounce sender
+                bot.loop.create_task(send_delayed_notice(channel.id, embed=final_embed))
                 
         elif wargame and wargame.get("cancelled"):
             try: await status_msg.delete()
             except: pass
 
-            # Revert the Wargame Database cooldown if the session was instantly aborted with 0 interaction
             if wargame.get("attempts", 0) == 0:
                 from db import guild_cooldowns
                 await guild_cooldowns.delete_one({"guild_id": str(wargame["guild_id"]), "raid_type": wargame["raid_type"]})
 
             if wargame.get("cancelled_reason") == "purge":
-                try: await channel.send("🛑 **Wargame Cancelled.** Element purged by moderator.", delete_after=10.0)
-                except: pass
+                # Spawns a background task that waits for the purge to finish entirely before sending the message
+                bot.loop.create_task(send_delayed_notice(channel.id, content="🛑 **Wargame Terminated.** Control matrix was destroyed by a massive channel purge."))
             
         active_wargames.pop(game_id, None)
 
@@ -326,11 +359,10 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         try: await original_cmd_msg.delete()
         except: pass
 
-@bot.event
-async def on_raw_message_delete(payload):
-    message_id = payload.message_id
 
-    # Detect if the UI view was manually deleted by a user
+# --- UNIFIED DELETION TRACKING (SINGLE & BULK PURGE SUPPORT) ---
+async def handle_message_deletion(message_id: int, channel_id: int):
+    """Processes standard deletions and massive discord purges synchronously"""
     if message_id in pending_dropdowns:
         meta = pending_dropdowns.pop(message_id)
         guild_id = meta["guild_id"]
@@ -338,15 +370,10 @@ async def on_raw_message_delete(payload):
         active_guild_sessions.discard(guild_id)
         post_raid_cooldowns[guild_id] = datetime.datetime.utcnow()
             
-        try:
-            channel = bot.get_channel(meta["channel_id"])
-            if channel:
-                await channel.send("🛑 **Deployment Aborted.** Selection interface was destroyed.", delete_after=10.0)
-        except Exception as e: 
-            print(f"Failed to send abort msg: {e}")
+        # Spawn the debounce background task
+        bot.loop.create_task(send_delayed_notice(channel_id, content="🛑 **Deployment Aborted.** Selection interface was destroyed via purge."))
         return
 
-    # Check if active Wargame messages are being interacted with
     for game_id, wargame in list(active_wargames.items()):
         if message_id in [wargame.get("status_msg_id"), wargame.get("dropdown_msg_id")]:
             if not wargame.get("cancelled"):
@@ -375,6 +402,20 @@ async def on_raw_message_delete(payload):
                     
                     await status_msg.edit(embed=embed)
             except Exception: pass
+
+@bot.event
+async def on_raw_message_delete(payload):
+    # Log activity for the Adaptive Debouncer
+    channel_delete_activity[payload.channel_id] = asyncio.get_event_loop().time()
+    await handle_message_deletion(payload.message_id, payload.channel_id)
+
+@bot.event
+async def on_raw_bulk_message_delete(payload):
+    """Secures against Discord API Mass-Purge evasion tactics"""
+    # Log activity for the Adaptive Debouncer
+    channel_delete_activity[payload.channel_id] = asyncio.get_event_loop().time()
+    for msg_id in payload.message_ids:
+        await handle_message_deletion(msg_id, payload.channel_id)
 
 async def start_bot():
     await bot.start(DISCORD_TOKEN)
