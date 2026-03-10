@@ -654,6 +654,7 @@ async def buy_premium(request: Request, guild_id: str):
     
     await payments.insert_one({
         "internal_order_id": order_id, "guild_id": guild_id, "user_id": session_user.get("id"),
+        "username": session_user.get("username", "Unknown"),
         "amount": amount, "days": days, "status": "pending",
         "created_at": datetime.datetime.utcnow()
     })
