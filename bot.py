@@ -12,6 +12,16 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 engine_state = {"active": True}
 active_wargames = {}
 
+# --- PROTOCOL METADATA MAPPING ---
+RAID_LABELS = {
+    "phishing": "Phishing Link",
+    "spam_flood": "Spam Flood",
+    "fake_mod": "Fake Moderator",
+    "insider_threat": "Insider Threat",
+    "escalation": "Escalation Conflict",
+    "harassment": "Coordinated Harassment"
+}
+
 # --- ANTI-SPAM & SESSION TRACKING ---
 pending_dropdowns = {} 
 active_guild_sessions = set() 
@@ -122,7 +132,7 @@ class RaidSelect(discord.ui.Select):
         await set_cooldown(guild_id, selected_raid)
 
         pending_dropdowns.pop(interaction.message.id, None)
-        await interaction.response.edit_message(content="⚡ **Deploying protocol...**", view=None) 
+        await interaction.response.edit_message(content=f"⚡ **Deploying {RAID_LABELS.get(selected_raid, 'protocol')}...**", view=None) 
         await execute_wargame(interaction, selected_raid, interaction.message, self.original_cmd_msg)
 
 class RaidView(discord.ui.View):
@@ -253,7 +263,9 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
     channel = interaction.channel
     guild_id = interaction.guild.id
     
-    status_embed = discord.Embed(title="⚡ Wargame Active", description="Injecting threats and contextual false positives...", color=discord.Color.dark_purple())
+    raid_title = RAID_LABELS.get(raid_type, "Unknown Protocol")
+    
+    status_embed = discord.Embed(title=f"⚡ {raid_title} Active", description="Injecting threats and contextual false positives...", color=discord.Color.dark_purple())
     status_msg = await channel.send(embed=status_embed)
     
     spawned_msgs = []
@@ -285,13 +297,14 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
         if not webhook:
             webhook = await channel.create_webhook(name="Sylas_Ghost_Matrix")
         
-        await status_msg.edit(embed=discord.Embed(title="⚔️ Wargame Deployed", description="Monitoring channel for Mod Response...", color=discord.Color.red()))
+        await status_msg.edit(embed=discord.Embed(title=f"⚔️ {raid_title} Deployed", description="Monitoring channel for Mod Response...", color=discord.Color.red()))
         
         active_wargames[game_id] = {
             "status_msg_id": status_msg.id, "dropdown_msg_id": dropdown_msg.id, 
             "channel_id": channel.id, "start_time": discord.utils.utcnow(),
             "scams_left": scam_count, "failed": False, "cancelled": False, "msg_map": {},
-            "attempts": 0, "guild_id": guild_id, "raid_type": raid_type
+            "attempts": 0, "guild_id": guild_id, "raid_type": raid_type,
+            "raid_title": raid_title
         }
         
         for p in all_payloads:
@@ -315,14 +328,17 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
             
         wargame = active_wargames.get(game_id)
         
+        # Temporal buffer heuristic to avoid missing the Discord API bulk execution window
+        await asyncio.sleep(1.5) 
+        
         if wargame and not wargame.get("cancelled"):
-            final_embed = discord.Embed(title="✅ WARGAME COMPLETE")
+            final_embed = discord.Embed(title=f"✅ {raid_title.upper()} COMPLETE")
             if wargame["failed"]:
-                final_embed.title = "❌ WARGAME FAILED"
+                final_embed.title = f"❌ {raid_title.upper()} FAILED"
                 final_embed.description = "A moderator deleted an innocent message. Structural integrity compromised."
                 final_embed.color = discord.Color.red()
             elif wargame["scams_left"] > 0:
-                final_embed.title = "❌ WARGAME FAILED (TIMEOUT)"
+                final_embed.title = f"❌ {raid_title.upper()} FAILED (TIMEOUT)"
                 final_embed.description = f"Mods failed to delete {wargame['scams_left']} threats within 60 seconds."
                 final_embed.color = discord.Color.orange()
             else:
@@ -346,7 +362,7 @@ async def execute_wargame(interaction: discord.Interaction, raid_type: str, drop
 
             if wargame.get("cancelled_reason") == "purge":
                 # Spawns a background task that waits for the purge to finish entirely before sending the message
-                bot.loop.create_task(send_delayed_notice(channel.id, content="🛑 **Wargame Terminated.** Control matrix was destroyed by a massive channel purge."))
+                bot.loop.create_task(send_delayed_notice(channel.id, content=f"🛑 **{raid_title} Terminated.** Control matrix was destroyed by a massive channel purge."))
             
         active_wargames.pop(game_id, None)
 
