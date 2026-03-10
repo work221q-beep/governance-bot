@@ -222,7 +222,7 @@ async def permissions_manager(request: Request, guild_id: str, tab: str = "roles
     is_authorized = False
     
     for g in session_user.get("guilds", []):
-        if str(g["id"]) == str(guild_id):
+        if str(g["id") == str(guild_id):
             perms_str = str(g.get("permissions", "0"))
             if g.get("owner"): user_power = "Owner"; is_authorized = True
             elif (int(perms_str) & 0x8) == 0x8: user_power = "Administrator"; is_authorized = True
