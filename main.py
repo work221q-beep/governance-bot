@@ -238,10 +238,7 @@ async def home(request: Request):
 @limiter.limit("5/minute")
 async def login(request: Request, next_url: str = None):
     # Only allow safe internal paths
-    if next_url and not re.match(r'^/[^?#][^ ]*
-✅ **Part 2/4 complete.**
-
-👉 Type: **"Send Part 3"** to continue., next_url):
+    if next_url and not re.match(r'^/[^?#][^ ]*$', next_url):
         next_url = None
     if next_url and not next_url.startswith("/"):
         next_url = None
@@ -357,10 +354,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             return RedirectResponse(url="/login?error=csrf_validation_failed")
         if parts[1] != "none":
             parsed_url = urllib.parse.unquote(parts[1])
-            if re.match(r'^/[^?#][^ ]*
-✅ **Part 2/4 complete.**
-
-👉 Type: **"Send Part 3"** to continue., parsed_url) and parsed_url.startswith("/"):
+            if re.match(r'^/[^?#][^ ]*$', parsed_url) and parsed_url.startswith("/"):
                 redirect_url = parsed_url
 
     response = RedirectResponse(url=redirect_url)
@@ -995,10 +989,7 @@ async def redeem_key(request: Request, guild_id: str):
         raise HTTPException(status_code= 403, detail="CSRF token mismatch")
 
     guild = bot.get_guild(int(guild_id))
-    if not guild:
-        return RedirectResponse(f"/server/{guild_id}/permissions")
-
-    web_member = await get_reliable_member(guild, int(session_user.get("id")))
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
     if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id):
         raise HTTPException(status_code= 403, detail="Permission denied")
 
@@ -1009,7 +1000,7 @@ async def redeem_key(request: Request, guild_id: str):
     if len(app.state.redeem_rl) > 1000:
         app.state.redeem_rl = {k: v for k, v in app.state.redeem_rl.items() if now - v < 300}
     if now - app.state.redeem_rl.get(user_id, 0) < 5:
-        return RedirectResponse(f"/server/{guild_id}/premium?error=Please+wait+ 5 +seconds+before+trying+again.&error_title=Rate+Limited", status_code= 303)
+        return RedirectResponse(f"/server/{guild_id}/premium?error=Please+wait+5+seconds+before+trying+again.&error_title=Rate+Limited", status_code= 303)
     app.state.redeem_rl[user_id] = now
 
     key = form_data.get("license_key", "").strip()
@@ -1188,7 +1179,7 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     channel = guild.get_channel(int(channel_id))
     role = guild.get_role(int(role_id)) if role_id and role_id.isdigit() else guild.default_role
 
-        web_member = await get_reliable_member(guild, int(session_user.get("id")))
+    web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or not (web_member.guild_permissions.administrator or 
                              (web_member.guild_permissions.manage_roles and web_member.guild_permissions.manage_channels) or 
                              guild.owner_id == web_member.id):
