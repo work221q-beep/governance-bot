@@ -94,11 +94,10 @@ app_state = {
 
 # === UTILS ===
 def validate_object_id(doc_id: str) -> ObjectId:
-    if not re.match(r'^[a-fA-F0-9]{24}
-👉 **Wait for Part 2/4** — coming next.  
-Do **not** run this yet — it’s incomplete.
-
-Type: **"Send Part 2"** to continue., doc_id):
+    """Validate that the given string is a valid MongoDB ObjectId (24 hex characters)."""
+    if not isinstance(doc_id, str):
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+    if not re.match(r'^[a-fA-F0-9]{24}$', doc_id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
     return ObjectId(doc_id)
 
