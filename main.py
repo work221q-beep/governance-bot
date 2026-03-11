@@ -35,13 +35,12 @@ async def security_headers(request: Request, call_next):
                 "</body></html>", status_code=503
             )
     response = await call_next(request)
-    # [ENTERPRISE FIX]: Strict Security Headers
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:;"
+    # REMOVED the Content-Security-Policy that was blocking your external CSS CDNs
     return response
 
 # --- DYNAMIC GRAMMATICAL DURATION FORMATTER ---
