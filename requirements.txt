@@ -9,4 +9,3 @@ python-dotenv>=1.0.0
 pymongo>=4.10.0
 dnspython>=2.4.0
 motor
-slowapi>=0.1.9
