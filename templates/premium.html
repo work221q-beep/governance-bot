@@ -468,15 +468,15 @@
     <script>
         fetch('/api/keys/mark_shown', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({key: '{{ unacknowledged_key.key }}'})
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'},
+            body: JSON.stringify({key: '{{ unacknowledged_key.key }}', csrf_token: '{{ csrf_token }}'})
         });
 
         function keepInInventory(key) {
             fetch('/api/keys/acknowledge', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({key: key})
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'},
+                body: JSON.stringify({key: key, csrf_token: '{{ csrf_token }}'})
             }).then(() => {
                 const overlay = document.getElementById('unack-overlay');
                 overlay.classList.add('opacity-0');
