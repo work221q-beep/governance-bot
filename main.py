@@ -2,69 +2,66 @@ import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, se
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.logger import logger
 from bson import ObjectId
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-
 from bot import start_bot, bot, engine_state
 from ai import harvest_loop, parallel_harvest_sweep
 from db import init_indexes, payload_armory, db
 from premium import is_guild_premium
 
 app = FastAPI()
-# Trust proxy headers so Render gives us the real user IP, not the load balancer IP
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
-
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
 templates = Jinja2Templates(directory="templates")
 
+# --- DYNAMIC GRAMMATICAL DURATION FORMATTER ---
 def format_duration(days_float):
-    try: days_float = float(days_float)
-    except (ValueError, TypeError): return "0 Mins"
+    try:
+        days_float = float(days_float)
+    except (ValueError, TypeError):
+        return "0 Mins"
+        
     def fmt(val, sing, plur):
         n = int(val) if val.is_integer() else round(val, 2)
         return f"{n} {sing if n == 1 else plur}"
-    if days_float >= 365: return fmt(days_float / 365.0, "Year", "Years")
-    elif days_float >= 30: return fmt(days_float / 30.0, "Month", "Months")
-    elif days_float >= 7: return fmt(days_float / 7.0, "Week", "Weeks")
-    elif days_float >= 1: return fmt(days_float, "Day", "Days")
-    elif days_float >= (1/24.0): return fmt(days_float * 24.0, "Hour", "Hours")
-    else: return fmt(days_float * 1440.0, "Min", "Mins")
+        
+    if days_float >= 365:
+        return fmt(days_float / 365.0, "Year", "Years")
+    elif days_float >= 30:
+        return fmt(days_float / 30.0, "Month", "Months")
+    elif days_float >= 7:
+        return fmt(days_float / 7.0, "Week", "Weeks")
+    elif days_float >= 1:
+        return fmt(days_float, "Day", "Days")
+    elif days_float >= (1/24.0):
+        return fmt(days_float * 24.0, "Hour", "Hours")
+    else:
+        return fmt(days_float * 1440.0, "Min", "Mins")
 
 templates.env.globals["format_duration"] = format_duration
+# ----------------------------------------------
 
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 ADMIN_KEY = os.getenv("ADMIN_KEY")
 MASTER_DISCORD_ID = os.getenv("MASTER_DISCORD_ID")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 if not ADMIN_KEY or not MASTER_DISCORD_ID:
     raise RuntimeError("CRITICAL: ADMIN_KEY and MASTER_DISCORD_ID environment variables must be set.")
 
 ALLOWED_COLLECTIONS = ["payload_armory", "guild_premium", "guild_cooldowns", "license_keys", "payments", "gift_logs", "sessions", "audit_logs", "admin_sessions", "premium_gifts"]
 
-app_state = {"payments_active": True, "redemption_active": True, "maintenance_mode": "none"}
+app_state = {
+    "payments_active": True,
+    "redemption_active": True,
+    "maintenance_mode": "none"
+}
 
 def validate_object_id(doc_id: str) -> ObjectId:
-    if not isinstance(doc_id, str) or not re.match(r'^[a-fA-F0-9]{24}$', doc_id): 
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+    if not re.match(r'^[a-fA-F0-9]{24}$', doc_id): raise HTTPException(status_code=400, detail="Invalid ID format")
     return ObjectId(doc_id)
 
-def sanitize_nosql_dict(data: dict) -> dict:
-    sanitized = {}
-    for k, v in data.items():
-        if str(k).startswith("$"): raise ValueError("NoSQL Injection Detected.")
-        if isinstance(v, dict): sanitized[k] = sanitize_nosql_dict(v)
-        else: sanitized[k] = v
-    return sanitized
+def secure_csrf_check(form_data_token: str, session_token: str) -> bool:
+    if not session_token or not form_data_token: return False
+    return hmac.compare_digest(form_data_token, session_token)
 
 async def get_reliable_member(guild, user_id: int):
     member = guild.get_member(user_id)
@@ -79,7 +76,10 @@ async def global_middleware(request: Request, call_next):
     if app_state["maintenance_mode"] in ["web", "both"]:
         if not path.startswith("/admin") and not path.startswith("/api/health") and not path.startswith("/static"):
             return HTMLResponse(
-                "<html><body style='background:#030305;color:#ff003c;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;text-align:center;'><h1 style='font-size:3rem;margin-bottom:10px;'>UPLINK SEVERED</h1><p style='color:#f4f4f5;font-size:1.2rem;opacity:0.7;'>The web matrix is currently undergoing structural maintenance. Return shortly.</p></body></html>", status_code=503
+                "<html><body style='background:#030305;color:#ff003c;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;text-align:center;'>"
+                "<h1 style='font-size:3rem;margin-bottom:10px;'>UPLINK SEVERED</h1>"
+                "<p style='color:#f4f4f5;font-size:1.2rem;opacity:0.7;'>The web matrix is currently undergoing structural maintenance. Return shortly.</p>"
+                "</body></html>", status_code=503
             )
     response = await call_next(request)
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -94,9 +94,8 @@ async def health_check():
     return HTMLResponse("OK", status_code=200)
 
 async def keep_awake_loop():
-    target_url = f"{BASE_URL.rstrip('/')}/api/health"
-    parsed = urllib.parse.urlparse(target_url)
-    if parsed.scheme not in ["http", "https"]: return
+    base_url = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
+    target_url = f"{base_url}/api/health"
     while True:
         await asyncio.sleep(10 * 60)
         try:
@@ -115,11 +114,16 @@ async def payment_reconciliation_loop():
         try:
             yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
             grace_period = datetime.datetime.utcnow() - datetime.timedelta(seconds=30)
-            stuck_payments = await payments.find({"status": "pending", "paymento_token": {"$exists": True}, "created_at": {"$gt": yesterday, "$lt": grace_period}}).to_list(50)
+            stuck_payments = await payments.find({
+                "status": "pending",
+                "paymento_token": {"$exists": True},
+                "created_at": {"$gt": yesterday, "$lt": grace_period}
+            }).to_list(50)
             for payment in stuck_payments:
                 await verify_and_fulfill_payment(payment["paymento_token"])
                 await asyncio.sleep(1) 
-        except Exception as e: print(f"[Reconciliation Daemon] Error: {e}")
+        except Exception as e:
+            print(f"[Reconciliation Daemon] Error: {e}")
         await asyncio.sleep(30) 
 
 async def verify_and_fulfill_payment(token: str):
@@ -129,26 +133,33 @@ async def verify_and_fulfill_payment(token: str):
     if not paymento_api_key: return None
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            verify_resp = await client.post("https://api.paymento.io/v1/payment/verify", headers={"Api-key": paymento_api_key, "Content-Type": "application/json"}, json={"token": token})
+            verify_resp = await client.post("[https://api.paymento.io/v1/payment/verify](https://api.paymento.io/v1/payment/verify)", headers={
+                "Api-key": paymento_api_key, "Content-Type": "application/json"
+            }, json={"token": token})
             verify_data = verify_resp.json()
             if verify_data.get("success") and "body" in verify_data:
                 trusted_order_id = verify_data["body"].get("orderId")
                 if not trusted_order_id: return None
-                
-                # Atomic update prevents race conditions if verified twice
-                update_result = await payments.update_one({"internal_order_id": trusted_order_id, "status": "pending"}, {"$set": {"status": "paid"}})
+                payment = await payments.find_one({"internal_order_id": trusted_order_id})
+                if not payment: return None
+                if payment["status"] == "paid":
+                    return await license_keys.find_one({"internal_order_id": trusted_order_id, "used": False})
+                update_result = await payments.update_one(
+                    {"_id": payment["_id"], "status": "pending"}, 
+                    {"$set": {"status": "paid"}}
+                )
                 if update_result.modified_count == 1:
-                    payment = await payments.find_one({"internal_order_id": trusted_order_id})
                     key = await generate_license_key(payment["days"])
-                    await license_keys.insert_one({
-                        "key": key, "used": False, "purchased_by": str(payment.get("user_id", "")),
-                        "purchased_by_username": payment.get("username", "Unknown"), 
-                        "internal_order_id": payment["internal_order_id"], "duration_days": payment["days"], 
-                        "acknowledged": False, "shown_count": 0, "created_at": datetime.datetime.utcnow()
-                    })
+                    await license_keys.update_one(
+                        {"key": key},
+                        {"$set": {
+                            "used": False, "purchased_by": str(payment.get("user_id", "")),
+                            "purchased_by_username": payment.get("username", "Unknown"), 
+                            "internal_order_id": payment["internal_order_id"],
+                            "duration_days": payment["days"], "acknowledged": False, "shown_count": 0
+                        }}
+                    )
                     return await license_keys.find_one({"key": key})
-                else:
-                    return await license_keys.find_one({"internal_order_id": trusted_order_id})
         except Exception as e: print(f"Payment Verification Failed: {e}")
     return None
 
@@ -175,14 +186,13 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
 
 @app.get("/login")
-@limiter.limit("10/minute")
 async def login(request: Request, next_url: str = None):
     if next_url and not re.match(r'^/[^/][a-zA-Z0-9_\-\?&=/]*$', next_url): next_url = None
     oauth_state = secrets.token_urlsafe(32)
     encoded_next_url = urllib.parse.quote(next_url, safe="") if next_url else "none"
     state = f"login_{encoded_next_url}_{oauth_state}"
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
+    url = f"[https://discord.com/api/oauth2/authorize?client_id=](https://discord.com/api/oauth2/authorize?client_id=){DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
     response = RedirectResponse(url)
     response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
@@ -200,12 +210,11 @@ async def logout(request: Request):
 async def invite_bot(guild_id: str = None):
     state = f"invite_{guild_id}" if guild_id else "invite"
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
-    url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions=8&scope=bot&redirect_uri={encoded_uri}&response_type=code&state={state}"
+    url = f"[https://discord.com/api/oauth2/authorize?client_id=](https://discord.com/api/oauth2/authorize?client_id=){DISCORD_CLIENT_ID}&permissions=8&scope=bot&redirect_uri={encoded_uri}&response_type=code&state={state}"
     if guild_id: url += f"&guild_id={guild_id}&disable_guild_select=true"
     return RedirectResponse(url)
 
 @app.get("/auth/callback")
-@limiter.limit("10/minute")
 async def callback(request: Request, code: str = None, error: str = None, state: str = None):
     if state and state.startswith("invite"):
         if error: return RedirectResponse(url="/")
@@ -219,7 +228,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     if error or not code: return RedirectResponse(url="/login")
 
     async with httpx.AsyncClient() as client:
-        token_res = await client.post("https://discord.com/api/oauth2/token", data={
+        token_res = await client.post("[https://discord.com/api/oauth2/token](https://discord.com/api/oauth2/token)", data={
             "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI
         })
@@ -227,10 +236,11 @@ async def callback(request: Request, code: str = None, error: str = None, state:
         access_token = token_data.get("access_token")
         if not access_token: return RedirectResponse(url="/login?error=auth_failed")
             
-        user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
+        user_res = await client.get("[https://discord.com/api/users/@me](https://discord.com/api/users/@me)", headers={"Authorization": f"Bearer {access_token}"})
         if user_res.status_code != 200: return RedirectResponse(url="/login?error=discord_api_failure")
+            
         user = user_res.json()
-        guilds = (await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})).json()
+        guilds = (await client.get("[https://discord.com/api/users/@me/guilds](https://discord.com/api/users/@me/guilds)", headers={"Authorization": f"Bearer {access_token}"})).json()
 
     manageable_guilds = []
     for g in guilds:
@@ -240,7 +250,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
             if g.get("owner") or (int(perms_str) & 0x8) == 0x8: manageable_guilds.append(g)
         except (ValueError, TypeError): continue
             
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png" if user.get("avatar") else None
+    avatar_url = f"[https://cdn.discordapp.com/avatars/](https://cdn.discordapp.com/avatars/){user['id']}/{user['avatar']}.png" if user.get("avatar") else None
     
     redirect_url = "/dashboard"
     if state and state.startswith("login_"):
@@ -258,8 +268,7 @@ async def callback(request: Request, code: str = None, error: str = None, state:
     csrf_token = secrets.token_urlsafe(32)
     user_data = { "id": user["id"], "username": user["username"], "global_name": user.get("global_name"), "avatar": avatar_url, "guilds": manageable_guilds }
     
-    # Session User-Agent tracking
-    await db.sessions.insert_one({ "session_id": session_id, "user": user_data, "csrf_token": csrf_token, "ua": request.headers.get("user-agent", ""), "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=7) })
+    await db.sessions.insert_one({ "session_id": session_id, "user": user_data, "csrf_token": csrf_token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=7) })
     await jit_payment_reconciliation(user_data["id"]) 
     response.set_cookie("session_id", session_id, httponly=True, secure=True, samesite="lax", max_age=7*24*60*60)
     response.delete_cookie("oauth_state", path="/")
@@ -270,14 +279,9 @@ async def get_session_user(request: Request):
     if not session_id: return None, None
     session_doc = await db.sessions.find_one({"session_id": session_id})
     if not session_doc: return None, None
-    # Verify User-Agent
-    if session_doc.get("ua") != request.headers.get("user-agent", ""):
-        await db.sessions.delete_one({"session_id": session_id})
-        return None, None
     return session_doc["user"], session_doc.get("csrf_token")
 
 @app.post("/api/keys/acknowledge")
-@limiter.limit("15/minute")
 async def acknowledge_key(request: Request):
     session_user, _ = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
@@ -287,7 +291,6 @@ async def acknowledge_key(request: Request):
     return HTMLResponse("OK")
 
 @app.post("/api/keys/mark_shown")
-@limiter.limit("30/minute")
 async def mark_key_shown(request: Request):
     session_user, _ = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
@@ -297,11 +300,10 @@ async def mark_key_shown(request: Request):
     return HTMLResponse("OK")
 
 @app.post("/user/redeem_universal")
-@limiter.limit("5/minute")
 async def redeem_universal(request: Request):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
-    if not app_state["redemption_active"]: return RedirectResponse("/dashboard?error=Key redemption disabled.")
+    if not app_state["redemption_active"]: return RedirectResponse("/dashboard?error=Key redemption is temporarily disabled for maintenance.")
     
     form_data = await request.form()
     guild_id = form_data.get("guild_id")
@@ -313,25 +315,23 @@ async def redeem_universal(request: Request):
             if g.get("owner") or (int(g.get("permissions", 0)) & 0x8) == 0x8: is_admin = True
             break
             
-    if not is_admin: return RedirectResponse("/dashboard?error=You lack admin permissions.")
+    if not is_admin: return RedirectResponse("/dashboard?error=You lack admin permissions for that server.")
         
     guild = bot.get_guild(int(guild_id))
-    if not guild: return RedirectResponse(f"/dashboard?bot_missing_guild={guild_id}", status_code=303)
+    if not guild:
+        referer = request.headers.get("referer", "/dashboard")
+        sep = "&" if "?" in referer else "?"
+        return RedirectResponse(f"{referer}{sep}bot_missing_guild={guild_id}", status_code=303)
 
     from premium import redeem_license_key
     from db import license_keys
-    
-    # Atomic TOCTOU Lock
-    lock_result = await license_keys.update_one({"key": key, "used": False}, {"$set": {"used": True}})
-    if lock_result.modified_count == 0: return RedirectResponse("/dashboard?error=Key invalid or already consumed.", status_code=303)
-    
     success = await redeem_license_key(guild_id, key)
+    
     if success: 
         await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(session_user.get("id")), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
     else: 
-        await license_keys.update_one({"key": key}, {"$set": {"used": False}})
-        return RedirectResponse("/dashboard?error=Engine failed to apply key.", status_code=303)
+        return RedirectResponse("/dashboard?error=Key is invalid or already consumed.", status_code=303)
 
 @app.get("/dashboard")
 async def dashboard(request: Request):
@@ -434,7 +434,6 @@ async def sync_manager_get(request: Request, guild_id: str):
     return RedirectResponse(f"/server/{guild_id}/permissions", status_code=303)
 
 @app.post("/server/{guild_id}/sync")
-@limiter.limit("5/minute")
 async def apply_sync_post(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
@@ -458,15 +457,18 @@ async def apply_sync_post(request: Request, guild_id: str):
                 try: current_kwargs[prop] = getattr(role.permissions, prop)
                 except: pass
                 
+        # [SECURITY FIX]: Hard-block Administrator assignment for @everyone to prevent Discord API silent rejections
         for p in managed_perms:
-            if role.name == "@everyone" and p == "administrator": current_kwargs[p] = False
-            else: current_kwargs[p] = p in perms_list
+            if role.name == "@everyone" and p == "administrator":
+                current_kwargs[p] = False
+            else:
+                current_kwargs[p] = p in perms_list
                 
         try: new_perms = discord.Permissions(**current_kwargs)
         except Exception: new_perms = role.permissions
         if role.permissions.value != new_perms.value:
             try: 
-                await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Sync")
+                await role.edit(permissions=new_perms, reason="Sylas Web Admin: Bulk Infrastructure Sync")
                 await asyncio.sleep(0.3)
             except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Bot lacks permission to edit role {role.name}.')}&error_title=Bot Permission Error", status_code=303)
             except Exception as e: return RedirectResponse(f"/server/{guild_id}/permissions?error={urllib.parse.quote(f'Failed to edit role {role.name}: {str(e)[:100]}')}&error_title=Error", status_code=303)
@@ -484,7 +486,9 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     has_premium = await is_guild_premium(int(guild_id))
     from db import guild_premium, license_keys
     prem_doc = await guild_premium.find_one({"guild_id": str(guild_id)})
+    
     premium_expires_at = prem_doc["expires_at"].isoformat() + "Z" if prem_doc and "expires_at" in prem_doc else None
+
     unacknowledged_key = await license_keys.find_one({"purchased_by": str(session_user.get("id")), "used": False, "acknowledged": False})
 
     latest_key = None
@@ -527,7 +531,6 @@ async def premium_manager(request: Request, guild_id: str, success: str = None, 
     })
 
 @app.post("/server/{guild_id}/buy_premium")
-@limiter.limit("10/hour")
 async def buy_premium(request: Request, guild_id: str):
     if not app_state["payments_active"]: return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway is currently undergoing maintenance.", status_code=303)
     import uuid
@@ -545,21 +548,19 @@ async def buy_premium(request: Request, guild_id: str):
     days = 7 if plan == "weekly" else (365 if plan == "yearly" else 30)
     order_id = f"SYLAS-{guild_id}-{uuid.uuid4().hex[:8]}"
     await payments.insert_one({"internal_order_id": order_id, "guild_id": guild_id, "user_id": session_user.get("id"), "username": session_user.get("username", "Unknown"), "amount": amount, "days": days, "status": "pending", "created_at": datetime.datetime.utcnow()})
-    
     base_url = os.getenv("BASE_URL")
-    if not base_url: raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL missing.")
+    if not base_url: raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
     base_url = base_url.rstrip('/')
-    
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     if not paymento_api_key: return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway API Key missing.", status_code=303)
     async with httpx.AsyncClient() as client:
         try:
             return_url = f"{base_url}/server/{guild_id}/premium?payment_return=true"
-            resp = await client.post("https://api.paymento.io/v1/payment/request", headers={"Api-key": paymento_api_key, "Content-Type": "application/json", "Accept": "text/plain"}, json={"fiatAmount": str(amount), "fiatCurrency": "USD", "ReturnUrl": return_url, "orderId": order_id, "Speed": 1, "EmailAddress": "admin@sylas.ai"})
+            resp = await client.post("[https://api.paymento.io/v1/payment/request](https://api.paymento.io/v1/payment/request)", headers={"Api-key": paymento_api_key, "Content-Type": "application/json", "Accept": "text/plain"}, json={"fiatAmount": str(amount), "fiatCurrency": "USD", "ReturnUrl": return_url, "orderId": order_id, "Speed": 1, "EmailAddress": "admin@sylas.ai"})
             data = resp.json()
             if data.get("success"):
                 token = data.get("body")
-                payment_url = f"https://app.paymento.io/gateway?token={token}"
+                payment_url = f"[https://app.paymento.io/gateway?token=](https://app.paymento.io/gateway?token=){token}"
                 await payments.update_one({"internal_order_id": order_id}, {"$set": {"paymento_token": token}})
                 if payment_url: return RedirectResponse(payment_url, status_code=303)
         except Exception as e: print(f"Paymento API Error: {e}")
@@ -584,8 +585,37 @@ async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
         return HTMLResponse("Accepted for background processing", status_code=200)
     return HTMLResponse(f"Ignored Status: {order_status}", status_code=200)
 
+@app.post("/server/{guild_id}/redeem_key")
+async def redeem_key(request: Request, guild_id: str):
+    if not app_state["redemption_active"]: return RedirectResponse(f"/server/{guild_id}/premium?error=Key redemption is currently disabled for maintenance.", status_code=303)
+    session_user, csrf_token = await get_session_user(request)
+    if not session_user: return RedirectResponse("/login")
+    form_data = await request.form()
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    guild = bot.get_guild(int(guild_id))
+    web_member = await get_reliable_member(guild, int(session_user.get("id"))) if guild else None
+    if not web_member or not (web_member.guild_permissions.administrator or guild.owner_id == web_member.id): raise HTTPException(status_code=403, detail="Permission denied")
+    if not hasattr(app.state, 'redeem_rl'): app.state.redeem_rl = {}
+    now = time.time()
+    user_id = session_user.get("id")
+    if len(app.state.redeem_rl) > 1000: app.state.redeem_rl = {k: v for k, v in app.state.redeem_rl.items() if now - v < 5}
+    last_attempt = app.state.redeem_rl.get(user_id, 0)
+    if now - last_attempt < 5: return RedirectResponse(f"/server/{guild_id}/premium?error=Please wait 5 seconds before trying again.&error_title=Rate Limited", status_code=303)
+    app.state.redeem_rl[user_id] = now
+    key = form_data.get("license_key", "").strip()
+    if not re.match(r'^SYLAS-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}$', key): return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid key format.&error_title=Failed", status_code=303)
+    from db import license_keys
+    key_doc = await license_keys.find_one({"key": key, "used": False})
+    if not key_doc: return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or consumed license key.&error_title=Redemption Failed", status_code=303)
+    from premium import redeem_license_key
+    success = await redeem_license_key(guild_id, key)
+    if success: 
+        await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(user_id), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
+        return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
+    else: return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
+
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
-@limiter.limit("20/minute")
 async def mod_action(request: Request, guild_id: str, action: str, target_id: str):
     if not target_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?error=Invalid+Target+ID", status_code=303)
     session_user, csrf_token = await get_session_user(request)
@@ -602,12 +632,14 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     
+    # [SECURITY FIX]: Explicit target fetch to prevent cache drift vulnerability
     target = await get_reliable_member(guild, int(target_id))
     if not target: return RedirectResponse(f"/server/{guild_id}/permissions")
     
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member: return RedirectResponse(f"/server/{guild_id}/permissions")
     
+    # Layer 1: Admin Executing Power
     has_perm = False
     if action == "ban" and web_member.guild_permissions.ban_members: has_perm = True
     elif action == "kick" and web_member.guild_permissions.kick_members: has_perm = True
@@ -617,9 +649,15 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     
     tab = "bots" if target.bot else "users"
     
+    # Layer 2: Discord Hierarchy Protection
     if web_member and guild.owner_id != web_member.id and web_member.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=You cannot {action} a user with an equal or higher role.&error_title=Admin Access Denied", status_code=303)
         
+    # Layer 3: Administrator Web Dashboard Immunity
+    if target.guild_permissions.administrator and guild.owner_id != web_member.id:
+        return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Administrators are immune to web dashboard moderation.&error_title=Protection Matrix", status_code=303)
+
+    # Layer 4: Bot Internal Executing Power
     bot_has_perm = False
     if action == "ban" and guild.me.guild_permissions.ban_members: bot_has_perm = True
     elif action == "kick" and guild.me.guild_permissions.kick_members: bot_has_perm = True
@@ -630,21 +668,25 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     if guild.owner_id == target.id or guild.me.top_role <= target.top_role: 
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Sylas cannot {action} {target.name}. The bot's role must be higher than the target's role.&error_title=Bot Hierarchy Error", status_code=303)
     
+    # Layer 5: Discord API Absolute TimeOut Restriction
     if action == "timeout" and target.guild_permissions.administrator:
         return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Discord API natively restricts timeouts on Administrators.&error_title=API Restriction", status_code=303)
         
     audit_log_reason = f"Sylas Web Admin ({admin_name}): {custom_reason}"
     dm_message = f"You have been **{action}** in **{guild.name}**.\n**Reason:** {custom_reason}" + (f"\n*Action triggered by Web Admin: {admin_name}*" if include_name else "")
     
+    # [SECURITY FIX]: Bifurcated Message Dispatch and Rollback Protocol
     if action in ["kick", "ban"]:
         sent_dm = None
         if not target.bot:
             try: sent_dm = await target.send(dm_message)
             except discord.Forbidden: pass
+            
         try:
             if action == "kick": await target.kick(reason=audit_log_reason)
             elif action == "ban": await target.ban(reason=audit_log_reason)
         except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
+            # Revert the false-positive DM from the user's inbox if the API abruptly blocks the action
             if sent_dm:
                 try: await sent_dm.delete()
                 except: pass
@@ -658,16 +700,18 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
         except (discord.Forbidden, discord.HTTPException, ValueError) as e: 
             error_safe = urllib.parse.quote(str(e)[:150])
             return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}&error=Execution Failed: {error_safe}&error_title=Execution Failed", status_code=303)
+            
         if not target.bot:
             try: await target.send(dm_message)
             except discord.Forbidden: pass
 
+    # Only log to Database once Discord validates the execution
     from db import db
     await db.audit_logs.insert_one({ "action": action, "guild_id": guild_id, "target_id": target_id, "admin_id": session_user.get("id"), "reason": custom_reason, "timestamp": datetime.datetime.utcnow() })
+    
     return RedirectResponse(f"/server/{guild_id}/permissions?tab={tab}", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/override")
-@limiter.limit("30/minute")
 async def channel_override(request: Request, guild_id: str, channel_id: str):
     if not channel_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid+Channel+ID", status_code=303)
     session_user, csrf_token = await get_session_user(request)
@@ -684,8 +728,8 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     has_override_auth = False
     if web_member:
         has_override_auth = (web_member.guild_permissions.administrator or (web_member.guild_permissions.manage_channels and web_member.guild_permissions.manage_roles) or guild.owner_id == web_member.id)
-    if not web_member or not has_override_auth: raise HTTPException(status_code=403, detail="Permission denied.")
-    if web_member and guild.owner_id != web_member.id and web_member.top_role <= role: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Hierarchy Error", status_code=303)
+    if not web_member or not has_override_auth: raise HTTPException(status_code=403, detail="Permission denied. Missing Manage Roles.")
+    if web_member and guild.owner_id != web_member.id and web_member.top_role <= role: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You cannot edit channel permissions for a role equal to or higher than your own.&error_title=Hierarchy Error", status_code=303)
     if channel and role:
         overwrite = channel.overwrites_for(role)
         extended_perms = [ "view_channel", "send_messages", "embed_links", "attach_files", "manage_messages", "read_message_history", "mention_everyone", "use_external_emojis", "add_reactions", "connect", "speak", "mute_members", "deafen_members", "move_members", "use_voice_activation", "request_to_speak", "manage_events", "send_messages_in_threads", "create_public_threads", "create_private_threads", "manage_threads" ]
@@ -694,12 +738,11 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
             if val == "allow": setattr(overwrite, perm, True)
             elif val == "deny": setattr(overwrite, perm, False)
             elif val == "inherit": setattr(overwrite, perm, None)
-        try: await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override")
-        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel Access Denied", status_code=303)
+        try: await channel.set_permissions(role, overwrite=overwrite, reason="Sylas Channel Override Matrix Sync")
+        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to manage this channel.&error_title=Channel Access Denied", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
 @app.post("/server/{guild_id}/channel/create")
-@limiter.limit("10/hour")
 async def create_channel(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
@@ -711,18 +754,17 @@ async def create_channel(request: Request, guild_id: str):
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
-    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Access Denied", status_code=303)
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
     try:
-        if channel_type == "text": await guild.create_text_channel(name=channel_name)
-        elif channel_type == "voice": await guild.create_voice_channel(name=channel_name)
-        elif channel_type == "category": await guild.create_category(name=channel_name)
-    except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Permission Denied", status_code=303)
+        if channel_type == "text": await guild.create_text_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "voice": await guild.create_voice_channel(name=channel_name, reason="Sylas Web Admin: Channel Created")
+        elif channel_type == "category": await guild.create_category(name=channel_name, reason="Sylas Web Admin: Category Created")
+    except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to create channels.&error_title=Permission Denied", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/delete")
-@limiter.limit("10/hour")
 async def delete_channel(request: Request, guild_id: str, channel_id: str):
-    if not channel_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid ID", status_code=303)
+    if not channel_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid+Channel+ID", status_code=303)
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
@@ -731,47 +773,49 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
-    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Access Denied", status_code=303)
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
     channel = guild.get_channel(int(channel_id))
     if channel:
-        try: await channel.delete()
-        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Permission Denied", status_code=303)
+        try: await channel.delete(reason="Sylas Web Admin: Channel Deleted")
+        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to delete this channel.&error_title=Permission Denied", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
 @app.post("/server/{guild_id}/channel/{channel_id}/rename")
-@limiter.limit("10/hour")
 async def rename_channel(request: Request, guild_id: str, channel_id: str):
-    if not channel_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid ID", status_code=303)
+    if not channel_id.isdigit(): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid+Channel+ID", status_code=303)
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     new_name = form_data.get("new_name")
-    if not new_name or len(new_name) < 1 or len(new_name) > 100: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Invalid Name", status_code=303)
+    if not new_name or len(new_name) < 1 or len(new_name) > 100: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel name must be between 1 and 100 characters.&error_title=Invalid Name", status_code=303)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', new_name): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel names can only contain alphanumeric characters, dashes, and underscores.&error_title=Invalid Name", status_code=303)
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
-    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Access Denied", status_code=303)
+    if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
     channel = guild.get_channel(int(channel_id))
     if channel:
-        try: await channel.edit(name=new_name)
-        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Permission Denied", status_code=303)
+        try: await channel.edit(name=new_name, reason="Sylas Web Admin: Channel Renamed")
+        except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to rename this channel.&error_title=Permission Denied", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
-# === MASTER ADMIN ROUTES (Secured) ===
 @app.get("/admin")
 async def admin_panel(request: Request):
-    # REMOVED: URL GET ?key=PASSWORD logic completely to prevent credential logging.
+    key_param = request.query_params.get("key")
+    if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
+        response = RedirectResponse("/admin", status_code=303)
+        token = secrets.token_urlsafe(32)
+        from db import db
+        await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
+        response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
+        return response
+
     admin_auth = request.cookies.get("admin_auth")
-    from db import db, guild_premium, payments, license_keys, guild_cooldowns, gift_logs
+    from db import db, guild_premium
     session = None
-    if admin_auth: 
-        session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
-        if session and session.get("ua") != request.headers.get("user-agent", ""):
-            await db.admin_sessions.delete_one({"token": admin_auth})
-            session = None
-            
+    if admin_auth: session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
     if not session:
         response = HTMLResponse(
             "<html><body style='background:#030305;color:#f00;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;'>"
@@ -782,6 +826,7 @@ async def admin_panel(request: Request):
         if admin_auth: response.delete_cookie("admin_auth", path="/")
         return response
     
+    from db import payments
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     await payments.delete_many({"status": "pending", "created_at": {"$lt": yesterday}})
     raw_payloads = await payload_armory.find().sort([("created_at", -1)]).to_list(360)
@@ -808,12 +853,14 @@ async def admin_panel(request: Request):
         db_structure[coll_name] = docs
         
     servers = []
+    from db import guild_cooldowns
     for guild in bot.guilds:
         is_prem = await is_guild_premium(guild.id)
         cds = await guild_cooldowns.find({"guild_id": str(guild.id)}).to_list(100)
         cooldown_modules = [cd["raid_type"] for cd in cds]
         servers.append({ "id": str(guild.id), "name": guild.name, "member_count": guild.member_count, "is_premium": is_prem, "cooldowns": cooldown_modules })
         
+    from db import license_keys
     keys = await license_keys.find().sort("expires_at", -1).to_list(1000)
     for k in keys: 
         k["_id"] = str(k["_id"])
@@ -824,12 +871,15 @@ async def admin_panel(request: Request):
         else:
             k["guild_name"] = "N/A"
             k["guild_id"] = None
+        k["used_by_user"] = k.get("used_by_user")
+        k["used_by_username"] = k.get("used_by_username")
     
     now_dt = datetime.datetime.utcnow()
     active_subs_count = await guild_premium.count_documents({"expires_at": {"$gt": now_dt}})
     all_payments = await payments.find({"$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gt": yesterday}}]}).sort("created_at", -1).to_list(1000)
     paid_payments_count = sum(1 for p in all_payments if p.get("status") == "paid")
     total_revenue = sum(float(p.get("amount", 0)) for p in all_payments if p.get("status") == "paid")
+    from db import gift_logs
     all_gifts = await gift_logs.find().sort("timestamp", -1).to_list(100)
     now = datetime.datetime.utcnow()
         
@@ -841,7 +891,6 @@ async def admin_panel(request: Request):
     })
 
 @app.post("/admin/auth")
-@limiter.limit("5/minute")
 async def admin_auth_post(request: Request):
     form = await request.form()
     key = form.get("key", "")
@@ -850,26 +899,10 @@ async def admin_auth_post(request: Request):
     if hmac.compare_digest(key, ADMIN_KEY):
         response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
-        await db.admin_sessions.insert_one({ 
-            "token": token, 
-            "ua": request.headers.get("user-agent", ""),
-            "created_at": datetime.datetime.utcnow(), 
-            "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) 
-        })
+        await db.admin_sessions.insert_one({ "token": token, "created_at": datetime.datetime.utcnow(), "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) })
         response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
         return response
     return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
-
-async def check_admin_auth(request: Request):
-    admin_auth = request.cookies.get("admin_auth")
-    if not admin_auth: return False
-    from db import db
-    session = await db.admin_sessions.find_one({"token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}})
-    if not session: return False
-    if session.get("ua") != request.headers.get("user-agent", ""):
-        await db.admin_sessions.delete_one({"token": admin_auth})
-        return False
-    return True
 
 @app.post("/admin/toggle_state/{feature}")
 async def toggle_state(request: Request, feature: str):
@@ -914,6 +947,13 @@ async def admin_purge_armory(request: Request):
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
+async def check_admin_auth(request: Request):
+    admin_auth = request.cookies.get("admin_auth")
+    if not admin_auth: return False
+    from db import db
+    session = await db.admin_sessions.find_one({"token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}})
+    return bool(session)
+
 @app.post("/admin/db/drop_collection/{coll_name}")
 async def admin_drop_collection(request: Request, coll_name: str):
     if not await check_admin_auth(request): return RedirectResponse("/")
@@ -943,22 +983,17 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
         data = json.loads(raw_json)
         if not isinstance(data, dict): raise ValueError("Root element must be a dictionary.")
         if "_id" in data: del data["_id"]
-        
-        # Apply NoSQL Sanitizer
-        data = sanitize_nosql_dict(data)
-        
         for k, v in data.items():
             if isinstance(v, str):
                 try: data[k] = datetime.datetime.fromisoformat(v)
                 except ValueError: pass
-                
         if coll_name == "payload_armory":
             from crypto import encrypt_data
             if "username" in data and isinstance(data["username"], str): data["username"] = encrypt_data(data["username"])
             if "spam_message" in data and isinstance(data["spam_message"], str): data["spam_message"] = encrypt_data(data["spam_message"])
         await db_ref[coll_name].update_one({"_id": valid_id}, {"$set": data})
-    except json.JSONDecodeError: print("[DB Error] Invalid JSON submitted.")
-    except Exception as e: print(f"[DB Error] {e}")
+    except json.JSONDecodeError: print("[DB Error] Invalid JSON submitted by Admin.")
+    except Exception as e: print(f"[DB Error] Error editing doc: {e}")
     return RedirectResponse("/admin?tab=db", status_code=303)
 
 @app.post("/admin/generate_key")
@@ -979,8 +1014,11 @@ async def admin_generate_key(request: Request):
             else: days = val
         except ValueError: days = 1.0
     else:
-        try: days = float(preset)
-        except ValueError: days = 30.0 
+        try: 
+            days = float(preset)
+        except ValueError:
+            days = 30.0 
+            
     from premium import generate_license_key
     await generate_license_key(days) 
     return RedirectResponse("/admin?tab=keys", status_code=303)
