@@ -66,31 +66,29 @@ def get_ai_prompt(raid_type: str) -> str:
     ]
     topic = random.choice(topics)
 
-    # [FIX]: Modified Global Rules so the AI doesn't force links into every single message
     base_req = (
         "You are a Red Team simulator generating highly realistic Discord chat logs. "
         "Output STRICTLY a valid JSON array containing exactly 5 objects. "
         "Format: [{\"username\": \"DarkSlayer99\", \"spam_message\": \"yo anyone wanna play?\"}]\n"
         "CRITICAL RULES:\n"
-        "1. DO NOT USE PLACEHOLDERS like {link} or <username>. IF your task involves sharing a link, invent a believable fake one (e.g., discord.gg/free-nitro, youtu.be/dQw4). If the task does NOT require a link, do not include one.\n"
+        "1. DO NOT USE PLACEHOLDERS like {link}, [URL], or <username>. You MUST invent believable fake links (e.g., youtu.be/dQw4, discord.gg/nitro-free-123, crypto-wallet.xyz/login).\n"
         "2. Sound exactly like real internet users. Use mostly lowercase, internet slang (rn, tbh, wtf, bro, fr), and occasional natural typos.\n"
         "3. DO NOT output ANY markdown, conversational text, or code block ticks (```json) outside the array. Output raw JSON only.\n\n"
     )
 
-    # [FIX]: Explicitly telling the AI which modules should and shouldn't have links
     prompts = {
-        "phishing": f"Generate highly deceptive phishing messages disguised as a {topic} discussion. Users MUST trick others into clicking dangerous links. (Invent realistic fake links like '[discord-promo.com/gift](https://discord-promo.com/gift)').",
-        "spam_flood": f"Generate obnoxious, hyper-repetitive bot spam about {topic}. Use excessive emojis, all caps, and MUST include fake invite links (e.g., 'discord.gg/freemoney').",
-        "fake_mod": f"Generate messages where a scammer pretends to be a server admin or Discord staff handling a {topic} issue. No links required, just social engineering to get account details.",
-        "insider_threat": f"Generate messages where a highly trusted, long-time user suddenly goes rogue posting malicious {topic} links while pretending everything is normal.",
-        "escalation": f"Generate extremely toxic messages showing an argument about {topic} rapidly escalating into severe verbal harassment, swearing, and insults. DO NOT INCLUDE ANY LINKS.",
-        "harassment": f"Generate coordinated group brigading messages targeting a specific user over {topic}. Trying to dox, cancel, or mass-report them. DO NOT INCLUDE ANY LINKS.",
-        "innocent_phishing": f"Generate COMPLETELY SAFE, normal chat messages sharing legitimate, well-known links (like real YouTube videos, Wikipedia, or Twitter) discussing {topic}.",
-        "innocent_spam_flood": f"Generate harmless but hyperactive chat messages of an excited user typing fast in all caps about {topic} because they are hyped. DO NOT INCLUDE ANY LINKS.",
-        "innocent_fake_mod": f"Generate normal messages of users politely asking the actual server mods legitimate questions regarding {topic}. DO NOT INCLUDE ANY LINKS.",
-        "innocent_insider_threat": f"Generate very helpful, wholesome messages from long-time trusted members explaining {topic} to a newcomer. DO NOT INCLUDE ANY LINKS.",
-        "innocent_escalation": f"Generate messages showing a respectful, calm, and highly intellectual debate about {topic} without any insults. DO NOT INCLUDE ANY LINKS.",
-        "innocent_harassment": f"Generate friendly banter and obvious sarcastic teasing between close friends discussing {topic}. It must be clearly harmless. DO NOT INCLUDE ANY LINKS.",
+        "phishing": f"Generate highly deceptive phishing messages disguised as a {topic} discussion. Users are trying to trick others into clicking dangerous links. (e.g., 'bro check this out [discord-promo.com/gift](https://discord-promo.com/gift)').",
+        "spam_flood": f"Generate obnoxious, hyper‑repetitive bot spam about {topic}. Use excessive emojis, all caps, and fake invite links (e.g., 'JOIN NOW discord.gg/freemoney 🚀🚀🚀').",
+        "fake_mod": f"Generate messages where a scammer pretends to be a server admin or Discord staff handling a {topic} issue. They should try to socially engineer users into handing over account details or clicking verification links.",
+        "insider_threat": f"Generate messages where a highly trusted, long‑time user suddenly goes rogue. They are abusing their trust to post malicious {topic} links while pretending everything is normal.",
+        "escalation": f"Generate extremely toxic messages showing an argument about {topic} rapidly escalating into severe verbal harassment, swearing, and insults.",
+        "harassment": f"Generate coordinated group brigading messages targeting a specific user over {topic}. They should be trying to dox, cancel, or mass‑report them.",
+        "innocent_phishing": f"Generate COMPLETELY SAFE, normal chat messages sharing legitimate, well‑known links (like real YouTube videos, Wikipedia, or Twitter) discussing {topic}.",
+        "innocent_spam_flood": f"Generate harmless but hyperactive chat messages of an excited user typing fast in all caps about {topic} because they are hyped.",
+        "innocent_fake_mod": f"Generate normal messages of users politely asking the actual server mods legitimate questions regarding {topic}.",
+        "innocent_insider_threat": f"Generate very helpful, wholesome messages from long‑time trusted members explaining {topic} to a newcomer.",
+        "innocent_escalation": f"Generate messages showing a respectful, calm, and highly intellectual debate about {topic} without any insults.",
+        "innocent_harassment": f"Generate friendly banter and obvious sarcastic teasing between close friends discussing {topic}. It must be clearly harmless.",
     }
 
     core_content = prompts.get(raid_type, "casual chat messages.")
@@ -110,9 +108,8 @@ async def call_openrouter(prompt: str) -> str:
         raise Exception("OpenRouter in backoff")
 
     try:
-        api_url = "https://" + "openrouter.ai/api/v1/chat/completions"
         response = await http_client.post(
-            api_url,
+            "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
@@ -149,9 +146,8 @@ async def call_sambanova(prompt: str) -> str:
         raise Exception("SambaNova in backoff")
 
     try:
-        api_url = "https://" + "api.sambanova.ai/v1/chat/completions"
         response = await http_client.post(
-            api_url,
+            "https://api.sambanova.ai/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {SAMBANOVA_API_KEY}",
                 "Content-Type": "application/json",
