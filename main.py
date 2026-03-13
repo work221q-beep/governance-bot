@@ -1,24 +1,40 @@
 import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, secrets, re, hashlib
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from bson import ObjectId
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from bot import start_bot, bot, engine_state
 from ai import harvest_loop, parallel_harvest_sweep
 from db import init_indexes, payload_armory, db
 from premium import is_guild_premium
 
-# === RATE LIMITER & PROXY FIX ===
-# ProxyHeadersMiddleware ensures the Limiter sees the real user IP on Render, not the load balancer IP.
+# === RATE LIMITER & HOST VALIDATION ===
 app = FastAPI()
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-limiter = Limiter(key_func=get_remote_address)
+base_url = os.getenv("BASE_URL", "").strip()
+allowed_hosts = {"localhost", "127.0.0.1"}
+if base_url:
+    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
+    if parsed_base.hostname:
+        allowed_hosts.add(parsed_base.hostname)
+        if parsed_base.hostname.startswith("www."):
+            allowed_hosts.add(parsed_base.hostname[4:])
+        else:
+            allowed_hosts.add(f"www.{parsed_base.hostname}")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(allowed_hosts))
+
+def get_rate_limit_key(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded_for:
+        return forwarded_for
+    client = request.client.host if request.client else "unknown"
+    return client or "unknown"
+
+limiter = Limiter(key_func=get_rate_limit_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -76,6 +92,27 @@ def secure_csrf_check(form_data_token: str, session_token: str) -> bool:
     if not session_token or not form_data_token: return False
     return hmac.compare_digest(form_data_token, session_token)
 
+def is_same_origin_request(request: Request) -> bool:
+    base_url = os.getenv("BASE_URL", "").strip()
+    if not base_url:
+        return True
+    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
+    expected_host = (parsed_base.netloc or parsed_base.path).lower()
+    for header_name in ("origin", "referer"):
+        header_value = request.headers.get(header_name)
+        if not header_value:
+            continue
+        parsed_header = urllib.parse.urlparse(header_value)
+        header_host = (parsed_header.netloc or parsed_header.path).lower()
+        if header_host == expected_host:
+            return True
+        return False
+    return True
+
+def normalize_reason(reason: str) -> str:
+    reason = (reason or "No reason provided.").strip()
+    return reason[:180]
+
 async def get_reliable_member(guild, user_id: int):
     member = guild.get_member(user_id)
     if not member:
@@ -112,7 +149,11 @@ async def keep_awake_loop():
     
     # [SECURITY FIX]: SSRF Prevention
     parsed = urllib.parse.urlparse(target_url)
-    if parsed.scheme not in ["http", "https"]: return
+    if parsed.scheme not in ["http", "https"] or not parsed.hostname:
+        return
+    if parsed.hostname not in allowed_hosts:
+        print("[KeepAlive] Refusing to call non-approved host.")
+        return
     
     while True:
         await asyncio.sleep(10 * 60)
@@ -216,7 +257,7 @@ async def login(request: Request, next_url: str = None):
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
     response = RedirectResponse(url)
-    response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
+    response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, samesite="lax", max_age=300)
     return response
 
 @app.api_route("/logout", methods=["GET", "POST"])
@@ -322,9 +363,14 @@ async def get_session_user(request: Request):
 @app.post("/api/keys/acknowledge")
 @limiter.limit("15/minute")
 async def acknowledge_key(request: Request):
-    session_user, _ = await get_session_user(request)
+    session_user, csrf_token = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     data = await request.json()
+    header_token = request.headers.get("x-csrf-token") or data.get("csrf_token")
+    if not secure_csrf_check(header_token, csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF token mismatch")
     from db import license_keys
     await license_keys.update_one({"key": data.get("key"), "purchased_by": str(session_user["id"])}, {"$set": {"acknowledged": True}})
     return HTMLResponse("OK")
@@ -332,9 +378,14 @@ async def acknowledge_key(request: Request):
 @app.post("/api/keys/mark_shown")
 @limiter.limit("30/minute")
 async def mark_key_shown(request: Request):
-    session_user, _ = await get_session_user(request)
+    session_user, csrf_token = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     data = await request.json()
+    header_token = request.headers.get("x-csrf-token") or data.get("csrf_token")
+    if not secure_csrf_check(header_token, csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF token mismatch")
     from db import license_keys
     await license_keys.update_one({"key": data.get("key"), "purchased_by": str(session_user["id"])}, {"$inc": {"shown_count": 1}})
     return HTMLResponse("OK")
@@ -347,8 +398,13 @@ async def redeem_universal(request: Request):
     if not app_state["redemption_active"]: return RedirectResponse("/dashboard?error=Key redemption is temporarily disabled for maintenance.")
     
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
+    safe_csrf = csrf_token or "invalid_token"
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf):
+        raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild_id = form_data.get("guild_id")
-    key = form_data.get("license_key")
+    key = (form_data.get("license_key") or "").strip()
     
     is_admin = False
     for g in session_user.get("guilds", []):
@@ -366,22 +422,12 @@ async def redeem_universal(request: Request):
 
     from premium import redeem_license_key
     from db import license_keys
-    
-    # [SECURITY FIX]: Atomic Update prevents duplicate redemption exploits
-    lock_result = await license_keys.update_one(
-        {"key": key, "used": False},
-        {"$set": {"used": True}}
-    )
-    if lock_result.modified_count == 0:
-        return RedirectResponse("/dashboard?error=Key is invalid or already consumed.", status_code=303)
-    
-    success = await redeem_license_key(guild_id, key)
-    if success: 
-        await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(session_user.get("id")), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
+
+    success = await redeem_license_key(guild_id, key, used_by_user=str(session_user.get("id")), used_by_username=session_user.get("username", "Unknown"))
+    if success:
+        await license_keys.update_one({"key": key}, {"$set": {"acknowledged": True}})
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: 
-        await license_keys.update_one({"key": key}, {"$set": {"used": False}})
-        return RedirectResponse("/dashboard?error=Engine failed to apply key.", status_code=303)
+    return RedirectResponse("/dashboard?error=Key is invalid, expired, already consumed, or failed to apply.", status_code=303)
 
 @app.get("/dashboard")
 async def dashboard(request: Request):
@@ -489,6 +535,8 @@ async def apply_sync_post(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -590,6 +638,8 @@ async def buy_premium(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -604,6 +654,9 @@ async def buy_premium(request: Request, guild_id: str):
     base_url = os.getenv("BASE_URL")
     if not base_url: raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
     base_url = base_url.rstrip('/')
+    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
+    if parsed_base.scheme not in {"https"} or not parsed_base.netloc:
+        raise HTTPException(status_code=500, detail="BASE_URL must be a valid HTTPS URL.")
     
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     if not paymento_api_key: return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway API Key missing.", status_code=303)
@@ -646,6 +699,8 @@ async def redeem_key(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -654,20 +709,12 @@ async def redeem_key(request: Request, guild_id: str):
     
     key = form_data.get("license_key", "").strip()
     if not re.match(r'^SYLAS-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}$', key): return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid key format.&error_title=Failed", status_code=303)
-    from db import license_keys
-    
-    # [SECURITY FIX]: Atomic TOCTOU Lock
-    lock_result = await license_keys.update_one({"key": key, "used": False}, {"$set": {"used": True}})
-    if lock_result.modified_count == 0: return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid or consumed license key.&error_title=Redemption Failed", status_code=303)
-    
+
     from premium import redeem_license_key
-    success = await redeem_license_key(guild_id, key)
-    if success: 
-        await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(session_user.get("id")), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
+    success = await redeem_license_key(guild_id, key, used_by_user=str(session_user.get("id")), used_by_username=session_user.get("username", "Unknown"))
+    if success:
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    else: 
-        await license_keys.update_one({"key": key}, {"$set": {"used": False}})
-        return RedirectResponse(f"/server/{guild_id}/premium?error=Error redeeming license key.&error_title=Redemption Failed", status_code=303)
+    return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid, expired, already consumed, or failed to apply license key.&error_title=Redemption Failed", status_code=303)
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 @limiter.limit("20/minute")
@@ -676,10 +723,12 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     
-    custom_reason = form_data.get("reason", "No reason provided.")
+    custom_reason = normalize_reason(form_data.get("reason", "No reason provided."))
     include_name = form_data.get("include_name") == "on"
     timeout_duration = int(form_data.get("duration", 10))
     admin_name = session_user.get('username')
@@ -771,6 +820,8 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     role_id = form_data.get("role_id")
@@ -802,6 +853,8 @@ async def create_channel(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     channel_name = form_data.get("channel_name")
@@ -824,6 +877,8 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -843,6 +898,8 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     new_name = form_data.get("new_name")
@@ -860,21 +917,6 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 
 @app.get("/admin")
 async def admin_panel(request: Request):
-    key_param = request.query_params.get("key")
-    if key_param and hmac.compare_digest(key_param, ADMIN_KEY):
-        response = RedirectResponse("/admin", status_code=303)
-        token = secrets.token_urlsafe(32)
-        from db import db
-        # [SECURITY FIX]: Session User-Agent Binding for Admins
-        await db.admin_sessions.insert_one({ 
-            "token": token, 
-            "ua": request.headers.get("user-agent", ""),
-            "created_at": datetime.datetime.utcnow(), 
-            "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) 
-        })
-        response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
-        return response
-
     admin_auth = request.cookies.get("admin_auth")
     from db import db, guild_premium, payments, license_keys, guild_cooldowns, gift_logs
     session = None
@@ -958,6 +1000,8 @@ async def admin_panel(request: Request):
 @app.post("/admin/auth")
 @limiter.limit("5/minute")
 async def admin_auth_post(request: Request):
+    if not is_same_origin_request(request):
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     form = await request.form()
     key = form.get("key", "")
     if not key: return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
@@ -976,6 +1020,8 @@ async def admin_auth_post(request: Request):
     return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
 
 async def check_admin_auth(request: Request):
+    if request.method != "GET" and not is_same_origin_request(request):
+        return False
     admin_auth = request.cookies.get("admin_auth")
     if not admin_auth: return False
     from db import db

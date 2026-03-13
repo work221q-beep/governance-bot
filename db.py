@@ -31,6 +31,8 @@ async def init_indexes():
     await guild_premium.create_index("guild_id", unique=True)
     await guild_cooldowns.create_index([("guild_id", 1), ("raid_type", 1)], unique=True)
     await license_keys.create_index("key", unique=True)
+    await payments.create_index("internal_order_id", unique=True)
+    await payments.create_index("paymento_token", sparse=True)
     await sessions.create_index("session_id", unique=True)
     await sessions.create_index("expires_at", expireAfterSeconds=0)
     await admin_sessions.create_index("token", unique=True)
