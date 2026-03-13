@@ -236,6 +236,7 @@
                     {% if bot_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
                 <form method="post" action="/admin/toggle_state/bot" class="relative z-10">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
                 </form>
             </div>
@@ -261,6 +262,7 @@
                     {% if app_state.payments_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
                 <form method="post" action="/admin/toggle_state/payments" class="relative z-10">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
                 </form>
             </div>
@@ -275,6 +277,7 @@
                     {% if app_state.redemption_active %}ONLINE{% else %}OFFLINE{% endif %}
                 </span>
                 <form method="post" action="/admin/toggle_state/redemption" class="relative z-10">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <button class="bg-white/5 hover:bg-white/10 px-6 py-3 rounded-lg font-bold text-white transition-all border border-white/10 hover:border-white/30 active:scale-95 text-sm">Toggle Power</button>
                 </form>
             </div>
@@ -287,6 +290,7 @@
                 Global Maintenance Protocol
             </h3>
             <form method="post" action="/admin/set_maintenance" class="flex flex-col md:flex-row gap-4 items-center">
+                <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                 <select name="mode" class="flex-1 w-full bg-black/50 border border-white/10 text-white p-4 rounded-lg focus:outline-none focus:border-[#ff003c] font-bold text-sm">
                     <option value="none" {% if app_state.maintenance_mode == 'none' %}selected{% endif %}>All Systems Normal (None)</option>
                     <option value="bot" {% if app_state.maintenance_mode == 'bot' %}selected{% endif %}>Discord Bot Offline Only</option>
@@ -312,9 +316,11 @@
             <div class="flex flex-wrap gap-3">
                 <button onclick="window.location.href='/admin?tab=armory'" class="liquid-glass hover:bg-white/10 text-white px-4 py-2 rounded-lg font-bold transition-all text-sm">🔄 Sync</button>
                 <form method="post" action="/admin/force_harvest">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <button type="submit" onclick="this.innerHTML='Compiling...'; this.classList.add('opacity-50');" class="bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/40 px-4 py-2 rounded-lg font-bold transition-all text-sm shadow-[0_0_15px_rgba(147,51,234,0.2)]">⚡ Force Generation</button>
                 </form>
                 <form method="post" action="/admin/purge_armory" onsubmit="return confirm('CRITICAL WARNING: This will vaporize all payloads globally. Proceed?');">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <button type="submit" class="bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg font-bold transition-all text-sm">⚠️ PURGE</button>
                 </form>
             </div>
@@ -348,6 +354,7 @@
                                 <p class="text-white/60 font-mono text-sm leading-relaxed">"{{ p.spam_message }}"</p>
                             </div>
                             <form method="post" action="/admin/delete_payload/{{ p._id }}">
+                                <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                                 <button class="text-red-400/50 hover:text-red-400 hover:bg-red-500/10 px-4 py-2 rounded-lg text-sm font-bold transition-all">Delete</button>
                             </form>
                         </div>
@@ -385,6 +392,7 @@
                         
                         <div id="folder-{{ coll_name }}" class="hidden bg-black/40 p-2 space-y-1 border-t border-white/5">
                             <form method="post" action="/admin/db/drop_collection/{{ coll_name }}" onsubmit="return confirm('SUDO WARNING: Erasing collection matrix. Proceed?');">
+                                <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                                 <button type="submit" class="text-[10px] uppercase font-black text-red-500/70 hover:bg-red-500/20 hover:text-red-400 px-3 py-1.5 rounded-md w-full text-left transition-all mb-1">⚠️ Drop Target</button>
                             </form>
                             
@@ -421,6 +429,7 @@
                         <span id="editor-title" class="text-cyan-400 font-mono text-sm font-bold tracking-wide">file.json</span>
                         <div class="flex gap-3">
                             <form id="form-delete-doc" method="post" action="" onsubmit="return confirm('Permanently shred this document?');">
+                            <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                                 <button type="submit" class="bg-red-900/20 border border-red-900/50 text-red-400 hover:bg-red-600 hover:text-white px-4 py-2 rounded-lg text-xs font-bold transition-all">Shred</button>
                             </form>
                             <button form="form-save-doc" type="submit" class="bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500 hover:text-white px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)]">Compile JSON</button>
@@ -428,6 +437,7 @@
                     </div>
                     
                     <form id="form-save-doc" method="post" action="" class="flex-1 flex flex-col p-4 relative">
+                        <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                         <div class="absolute inset-0 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03]"></div>
                         <textarea id="editor-textarea" name="raw_json" class="flex-1 w-full bg-black/40 text-[#0ff] font-mono text-xs leading-loose p-6 rounded-xl border border-white/10 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 resize-none shadow-inner transition-colors z-10"></textarea>
                     </form>
@@ -458,6 +468,7 @@
                     <div class="mt-3 flex flex-wrap gap-2">
                         {% for mod in s.cooldowns %}
                         <form method="post" action="/admin/server/{{ s.id }}/reset_cooldown/{{ mod }}" class="inline">
+                                            <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                             <button title="Reset {{ mod }} cooldown" class="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded font-black uppercase tracking-wider hover:bg-red-500/30 transition-colors">
                                 {{ mod }} ✕
                             </button>
@@ -470,11 +481,13 @@
                 </div>
                 <div class="flex gap-3">
                     <form method="post" action="/admin/server/{{ s.id }}/toggle_premium">
+                        <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                         <button class="px-4 py-2 rounded-lg text-sm font-bold transition-all {% if s.is_premium %}bg-emerald-500/20 text-emerald-400 border border-emerald-500/30{% else %}bg-white/5 text-white/50 border border-white/10{% endif %}">
                             {% if s.is_premium %}💎 Revoke Premium{% else %}Force Premium{% endif %}
                         </button>
                     </form>
                     <form method="post" action="/admin/server/{{ s.id }}/reset_cooldowns">
+                        <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                         <button class="bg-blue-500/20 border border-blue-500/30 text-blue-400 hover:bg-blue-500 hover:text-white px-4 py-2 rounded-lg text-sm font-bold transition-all">Reset All CD</button>
                     </form>
                 </div>
@@ -542,6 +555,7 @@
             <div class="bg-black/40 border border-white/5 p-6 rounded-xl">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2">Generate License Key</h4>
                 <form method="post" action="/admin/generate_key" class="flex flex-col gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <div class="flex gap-3">
                         <select name="duration_preset" id="duration_preset" onchange="document.getElementById('custom_key_div').classList.toggle('hidden', this.value !== 'custom')" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-bold text-sm flex-1 focus:outline-none focus:border-purple-500 appearance-none cursor-pointer">
                             <option value="1">24 Hours (1 Day)</option>
@@ -569,6 +583,7 @@
             <div class="bg-black/40 border border-white/5 p-6 rounded-xl">
                 <h4 class="text-white/70 font-bold uppercase tracking-widest text-xs mb-4 border-b border-white/5 pb-2">Direct Gift Premium</h4>
                 <form method="post" action="/admin/gift_premium" class="flex gap-3">
+                    <input type="hidden" name="csrf_token" value="{{ admin_csrf_token }}">
                     <input type="text" name="guild_id" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-mono flex-1 text-sm focus:outline-none focus:border-emerald-500" placeholder="Guild ID" required>
                     <input type="number" name="days" value="30" class="bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white font-mono w-24 text-sm focus:outline-none focus:border-emerald-500" placeholder="Days">
                     <button type="submit" class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white px-6 py-3 rounded-lg font-bold transition-all text-sm">Gift</button>

@@ -59,19 +59,12 @@
             <p class="text-white/50 text-lg md:text-xl font-light tracking-wide max-w-2xl mx-auto">
                 Select a target realm to configure security matrices, deploy payloads, or upgrade defensive capabilities.
             </p>
-            
             {% if is_master %}
             <div class="mt-12">
-                <button onclick="accessMasterPanel()" class="cyber-btn text-[#ff003c] font-black uppercase tracking-widest text-sm px-10 py-4 rounded-none">
-                    Initialize Master Control
-                </button>
+                <a href="/admin" class="cyber-btn inline-block text-[#ff003c] font-black uppercase tracking-widest text-sm px-10 py-4 rounded-none">
+                    Open Master Control
+                </a>
             </div>
-            <script>
-                function accessMasterPanel() {
-                    let key = prompt(":: OVERRIDE REQUIRED ::\n\nEnter Master Key sequence:");
-                    if (key) { window.location.href = "/admin?key=" + encodeURIComponent(key); }
-                }
-            </script>
             {% endif %}
         </div>
 
@@ -218,14 +211,14 @@
         fetch('/api/keys/mark_shown', {
             method: 'POST',
             headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'},
-            body: JSON.stringify({key: '{{ unacknowledged_key.key }}', csrf_token: '{{ csrf_token }}'})
+            body: JSON.stringify({key: '{{ unacknowledged_key.key }}'})
         });
 
         function keepInInventory(key) {
             fetch('/api/keys/acknowledge', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'},
-                body: JSON.stringify({key: key, csrf_token: '{{ csrf_token }}'})
+                body: JSON.stringify({key: key})
             }).then(() => {
                 const overlay = document.getElementById('unack-overlay');
                 overlay.classList.add('opacity-0');
