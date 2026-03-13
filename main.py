@@ -247,15 +247,15 @@ async def invite_bot(guild_id: str = None):
 @limiter.limit("10/minute")
 async def callback(request: Request, code: str = None, error: str = None, state: str = None):
     if state and state.startswith("invite"):
-        if error: return RedirectResponse(url="/")
         parts = state.split("_")
+        invite_redirect = "/dashboard"
         if len(parts) > 1 and parts[1] and parts[1].isdigit():
-            guild_id = parts[1]
-            return HTMLResponse(content=f"<html><head><meta http-equiv='refresh' content='3;url=/server/{guild_id}/permissions' /><style>body {{ background: #030305; color: white; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}</style></head><body><h2 style='font-size: 2rem; font-weight: 900; letter-spacing: 0.1em;'>AUTHORIZED. REDIRECTING...</h2></body></html>")
-        else:
-            return HTMLResponse(content="<html><head><meta http-equiv='refresh' content='3;url=/dashboard' /><style>body { background: #030305; color: white; font-family: 'Space Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }</style></head><body><h2 style='font-size: 2rem; font-weight: 900; letter-spacing: 0.1em;'>AUTHORIZED. REDIRECTING...</h2></body></html>")
+            invite_redirect = f"/server/{parts[1]}/permissions"
+        if error:
+            return RedirectResponse(url=f"{invite_redirect}?error=Discord authorization was canceled.", status_code=303)
+        return RedirectResponse(url=invite_redirect, status_code=303)
 
-    if error or not code: return RedirectResponse(url="/login")
+    if error or not code: return RedirectResponse(url="/login", status_code=303)
 
     async with httpx.AsyncClient() as client:
         token_res = await client.post("https://discord.com/api/oauth2/token", data={
@@ -801,8 +801,9 @@ async def create_channel(request: Request, guild_id: str):
     form_data = await request.form()
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
-    channel_name = form_data.get("channel_name")
     channel_type = form_data.get("channel_type")
+    channel_name, name_error = normalize_discord_channel_name(form_data.get("channel_name"), channel_type)
+    if name_error: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error={urllib.parse.quote(name_error)}&error_title=Invalid Name", status_code=303)
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
@@ -842,17 +843,19 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     form_data = await request.form()
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
-    new_name = form_data.get("new_name")
-    if not new_name or len(new_name) < 1 or len(new_name) > 100: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel name must be between 1 and 100 characters.&error_title=Invalid Name", status_code=303)
-    if not re.match(r'^[a-zA-Z0-9_-]+$', new_name): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Channel names can only contain alphanumeric characters, dashes, and underscores.&error_title=Invalid Name", status_code=303)
     guild = bot.get_guild(int(guild_id))
     if not guild: return RedirectResponse(f"/server/{guild_id}/permissions")
     web_member = await get_reliable_member(guild, int(session_user.get("id")))
     if not web_member or (not web_member.guild_permissions.administrator and not web_member.guild_permissions.manage_channels and guild.owner_id != web_member.id): return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=You do not have permission to manage channels.&error_title=Access Denied", status_code=303)
     channel = guild.get_channel(int(channel_id))
     if channel:
+        channel_kind = getattr(channel, "type", None)
+        channel_kind = str(channel_kind) if channel_kind is not None else channel.__class__.__name__.lower()
+        new_name, name_error = normalize_discord_channel_name(form_data.get("new_name"), channel_kind)
+        if name_error: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error={urllib.parse.quote(name_error)}&error_title=Invalid Name", status_code=303)
         try: await channel.edit(name=new_name, reason="Sylas Web Admin: Channel Renamed")
         except discord.Forbidden: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error=Sylas lacks permissions to rename this channel.&error_title=Permission Denied", status_code=303)
+        except discord.HTTPException as exc: return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels&error={urllib.parse.quote(str(exc))}&error_title=Discord Rejected Rename", status_code=303)
     return RedirectResponse(f"/server/{guild_id}/permissions?tab=channels", status_code=303)
 
 @app.get("/admin")
