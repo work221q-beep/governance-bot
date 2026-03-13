@@ -32,8 +32,8 @@ async def generate_license_key(days: int) -> str:
     })
     return key
 
-async def redeem_license_key(guild_id: str, key: str, used_by_user: str | None = None, used_by_username: str | None = None) -> bool:
-    """Redeems a license key and grants premium to the server atomically."""
+async def redeem_license_key(guild_id: str, key: str) -> bool:
+    """Redeems a license key and grants premium to the server."""
     record = await license_keys.find_one({"key": key, "used": False})
     if not record:
         return False
@@ -48,29 +48,17 @@ async def redeem_license_key(guild_id: str, key: str, used_by_user: str | None =
         exp = datetime.utcnow() - timedelta(days=1)
 
     if datetime.utcnow() > exp:
-        await license_keys.update_one({"_id": record["_id"], "used": False}, {"$set": {"used": True, "expired": True}})
         return False
-
-    update_fields = {"used": True, "used_by_guild": str(guild_id), "redeemed_at": datetime.utcnow()}
-    if used_by_user is not None:
-        update_fields["used_by_user"] = str(used_by_user)
-    if used_by_username is not None:
-        update_fields["used_by_username"] = used_by_username
 
     update_result = await license_keys.update_one(
         {"_id": record["_id"], "used": False},
-        {"$set": update_fields}
+        {"$set": {"used": True, "used_by_guild": str(guild_id), "used_at": datetime.utcnow()}}
     )
-
     if update_result.modified_count == 0:
         return False
 
-    try:
-        await grant_premium(guild_id, record["duration_days"])
-        return True
-    except Exception:
-        await license_keys.update_one({"_id": record["_id"]}, {"$set": {"used": False}, "$unset": {"used_by_guild": "", "used_by_user": "", "used_by_username": "", "redeemed_at": ""}})
-        raise
+    await grant_premium(guild_id, record["duration_days"])
+    return True
 
 async def is_guild_premium(guild_id: int) -> bool:
     """Checks if a server has an active premium subscription."""

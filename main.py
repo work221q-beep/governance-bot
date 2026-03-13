@@ -1,40 +1,31 @@
 import os, asyncio, httpx, discord, datetime, time, json, urllib.parse, hmac, secrets, re, hashlib
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from bson import ObjectId
 from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from bot import start_bot, bot, engine_state
 from ai import harvest_loop, parallel_harvest_sweep
 from db import init_indexes, payload_armory, db
 from premium import is_guild_premium
 
-# === RATE LIMITER & HOST VALIDATION ===
+# === RATE LIMITER & PROXY FIX ===
+# ProxyHeadersMiddleware ensures the Limiter sees the real user IP on Render, not the load balancer IP.
 app = FastAPI()
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-base_url = os.getenv("BASE_URL", "").strip()
-allowed_hosts = {"localhost", "127.0.0.1"}
-if base_url:
-    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
-    if parsed_base.hostname:
-        allowed_hosts.add(parsed_base.hostname)
-        if parsed_base.hostname.startswith("www."):
-            allowed_hosts.add(parsed_base.hostname[4:])
-        else:
-            allowed_hosts.add(f"www.{parsed_base.hostname}")
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(allowed_hosts))
+base_url_for_hosts = os.getenv("BASE_URL", "https://localhost").rstrip("/")
+parsed_base = urllib.parse.urlparse(base_url_for_hosts)
+trusted_host = parsed_base.hostname or "localhost"
+allowed_hosts = [trusted_host, f"www.{trusted_host}", "localhost", "127.0.0.1"]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
-def get_rate_limit_key(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if forwarded_for:
-        return forwarded_for
-    client = request.client.host if request.client else "unknown"
-    return client or "unknown"
-
-limiter = Limiter(key_func=get_rate_limit_key)
+limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -92,27 +83,6 @@ def secure_csrf_check(form_data_token: str, session_token: str) -> bool:
     if not session_token or not form_data_token: return False
     return hmac.compare_digest(form_data_token, session_token)
 
-def is_same_origin_request(request: Request) -> bool:
-    base_url = os.getenv("BASE_URL", "").strip()
-    if not base_url:
-        return True
-    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
-    expected_host = (parsed_base.netloc or parsed_base.path).lower()
-    for header_name in ("origin", "referer"):
-        header_value = request.headers.get(header_name)
-        if not header_value:
-            continue
-        parsed_header = urllib.parse.urlparse(header_value)
-        header_host = (parsed_header.netloc or parsed_header.path).lower()
-        if header_host == expected_host:
-            return True
-        return False
-    return True
-
-def normalize_reason(reason: str) -> str:
-    reason = (reason or "No reason provided.").strip()
-    return reason[:180]
-
 async def get_reliable_member(guild, user_id: int):
     member = guild.get_member(user_id)
     if not member:
@@ -129,7 +99,7 @@ async def global_middleware(request: Request, call_next):
                 "<html><body style='background:#030305;color:#ff003c;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;text-align:center;'>"
                 "<h1 style='font-size:3rem;margin-bottom:10px;'>UPLINK SEVERED</h1>"
                 "<p style='color:#f4f4f5;font-size:1.2rem;opacity:0.7;'>The web matrix is currently undergoing structural maintenance. Return shortly.</p>"
-                "</body></html>", status_code=503
+                "<p style='margin-top:14px;color:#aaa;max-width:560px;text-align:center;'>Use the form below to sign in. Query-string admin keys are disabled so your password never appears in the URL.</p></body></html>", status_code=503
             )
     response = await call_next(request)
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -149,11 +119,7 @@ async def keep_awake_loop():
     
     # [SECURITY FIX]: SSRF Prevention
     parsed = urllib.parse.urlparse(target_url)
-    if parsed.scheme not in ["http", "https"] or not parsed.hostname:
-        return
-    if parsed.hostname not in allowed_hosts:
-        print("[KeepAlive] Refusing to call non-approved host.")
-        return
+    if parsed.scheme not in ["http", "https"]: return
     
     while True:
         await asyncio.sleep(10 * 60)
@@ -257,7 +223,7 @@ async def login(request: Request, next_url: str = None):
     encoded_uri = urllib.parse.quote(DISCORD_REDIRECT_URI, safe="")
     url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&response_type=code&redirect_uri={encoded_uri}&scope=identify%20guilds&state={urllib.parse.quote(state)}"
     response = RedirectResponse(url)
-    response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, samesite="lax", max_age=300)
+    response.set_cookie("oauth_state", oauth_state, httponly=True, secure=True, max_age=300)
     return response
 
 @app.api_route("/logout", methods=["GET", "POST"])
@@ -364,13 +330,10 @@ async def get_session_user(request: Request):
 @limiter.limit("15/minute")
 async def acknowledge_key(request: Request):
     session_user, csrf_token = await get_session_user(request)
-    if not session_user: return HTMLResponse(status_code=401)
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
-    data = await request.json()
-    header_token = request.headers.get("x-csrf-token") or data.get("csrf_token")
-    if not secure_csrf_check(header_token, csrf_token):
+    if not session_user: return HTMLResponse(status_code=200)
+    if not secure_csrf_check(request.headers.get("x-csrf-token", ""), csrf_token or ""):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    data = await request.json()
     from db import license_keys
     await license_keys.update_one({"key": data.get("key"), "purchased_by": str(session_user["id"])}, {"$set": {"acknowledged": True}})
     return HTMLResponse("OK")
@@ -380,12 +343,9 @@ async def acknowledge_key(request: Request):
 async def mark_key_shown(request: Request):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return HTMLResponse(status_code=401)
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
-    data = await request.json()
-    header_token = request.headers.get("x-csrf-token") or data.get("csrf_token")
-    if not secure_csrf_check(header_token, csrf_token):
+    if not secure_csrf_check(request.headers.get("x-csrf-token", ""), csrf_token or ""):
         raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    data = await request.json()
     from db import license_keys
     await license_keys.update_one({"key": data.get("key"), "purchased_by": str(session_user["id"])}, {"$inc": {"shown_count": 1}})
     return HTMLResponse("OK")
@@ -398,13 +358,10 @@ async def redeem_universal(request: Request):
     if not app_state["redemption_active"]: return RedirectResponse("/dashboard?error=Key redemption is temporarily disabled for maintenance.")
     
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
-    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf):
-        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild_id = form_data.get("guild_id")
-    key = (form_data.get("license_key") or "").strip()
+    key = form_data.get("license_key")
     
     is_admin = False
     for g in session_user.get("guilds", []):
@@ -423,11 +380,11 @@ async def redeem_universal(request: Request):
     from premium import redeem_license_key
     from db import license_keys
 
-    success = await redeem_license_key(guild_id, key, used_by_user=str(session_user.get("id")), used_by_username=session_user.get("username", "Unknown"))
+    success = await redeem_license_key(guild_id, key)
     if success:
-        await license_keys.update_one({"key": key}, {"$set": {"acknowledged": True}})
+        await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(session_user.get("id")), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    return RedirectResponse("/dashboard?error=Key is invalid, expired, already consumed, or failed to apply.", status_code=303)
+    return RedirectResponse("/dashboard?error=Key is invalid, expired, or already consumed.", status_code=303)
 
 @app.get("/dashboard")
 async def dashboard(request: Request):
@@ -535,8 +492,6 @@ async def apply_sync_post(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -638,8 +593,6 @@ async def buy_premium(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -654,9 +607,6 @@ async def buy_premium(request: Request, guild_id: str):
     base_url = os.getenv("BASE_URL")
     if not base_url: raise HTTPException(status_code=500, detail="CRITICAL: BASE_URL environment variable is missing.")
     base_url = base_url.rstrip('/')
-    parsed_base = urllib.parse.urlparse(base_url if "://" in base_url else f"https://{base_url}")
-    if parsed_base.scheme not in {"https"} or not parsed_base.netloc:
-        raise HTTPException(status_code=500, detail="BASE_URL must be a valid HTTPS URL.")
     
     paymento_api_key = os.getenv("PAYMENTO_API_KEY")
     if not paymento_api_key: return RedirectResponse(f"/server/{guild_id}/premium?error=Payment gateway API Key missing.", status_code=303)
@@ -678,11 +628,11 @@ async def process_payment_bg(token: str): await verify_and_fulfill_payment(token
 @app.post("/api/webhook/paymento")
 async def paymento_webhook(request: Request, bg_tasks: BackgroundTasks):
     raw_body = await request.body()
-    signature = (request.headers.get("hmac_sha256_signature") or request.headers.get("x-hmac-sha256-signature") or request.headers.get("hmac-sha256-signature"))
+    signature = (request.headers.get("X-Paymento-Signature") or request.headers.get("x-paymento-signature") or request.headers.get("hmac_sha256_signature") or request.headers.get("x-hmac-sha256-signature") or request.headers.get("hmac-sha256-signature"))
     secret_key = os.getenv("PAYMENTO_SECRET_KEY", "")
     if not secret_key or not signature: return HTMLResponse("Missing Authentication", status_code=403)
-    calculated_signature = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).hexdigest().upper()
-    if not hmac.compare_digest(calculated_signature, signature.upper()): return HTMLResponse("Invalid HMAC Signature", status_code=403)
+    calculated_signature = hmac.new(secret_key.strip().encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calculated_signature, signature.strip().lower()): return HTMLResponse("Invalid HMAC Signature", status_code=403)
     try: payload = json.loads(raw_body.decode('utf-8'))
     except json.JSONDecodeError: return HTMLResponse("Invalid JSON", status_code=400)
     token = payload.get("Token") or payload.get("token")
@@ -699,8 +649,6 @@ async def redeem_key(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -709,12 +657,14 @@ async def redeem_key(request: Request, guild_id: str):
     
     key = form_data.get("license_key", "").strip()
     if not re.match(r'^SYLAS-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{8}$', key): return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid key format.&error_title=Failed", status_code=303)
+    from db import license_keys
 
     from premium import redeem_license_key
-    success = await redeem_license_key(guild_id, key, used_by_user=str(session_user.get("id")), used_by_username=session_user.get("username", "Unknown"))
+    success = await redeem_license_key(guild_id, key)
     if success:
+        await license_keys.update_one({"key": key}, {"$set": {"used_by_user": str(session_user.get("id")), "used_by_username": session_user.get("username", "Unknown"), "acknowledged": True}})
         return RedirectResponse(f"/server/{guild_id}/premium?success=true", status_code=303)
-    return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid, expired, already consumed, or failed to apply license key.&error_title=Redemption Failed", status_code=303)
+    return RedirectResponse(f"/server/{guild_id}/premium?error=Invalid, expired, or already used license key.&error_title=Redemption Failed", status_code=303)
 
 @app.post("/server/{guild_id}/action/{action}/{target_id}")
 @limiter.limit("20/minute")
@@ -723,12 +673,10 @@ async def mod_action(request: Request, guild_id: str, action: str, target_id: st
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     
-    custom_reason = normalize_reason(form_data.get("reason", "No reason provided."))
+    custom_reason = form_data.get("reason", "No reason provided.")
     include_name = form_data.get("include_name") == "on"
     timeout_duration = int(form_data.get("duration", 10))
     admin_name = session_user.get('username')
@@ -820,8 +768,6 @@ async def channel_override(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     role_id = form_data.get("role_id")
@@ -853,8 +799,6 @@ async def create_channel(request: Request, guild_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     channel_name = form_data.get("channel_name")
@@ -877,8 +821,6 @@ async def delete_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     guild = bot.get_guild(int(guild_id))
@@ -898,8 +840,6 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
     session_user, csrf_token = await get_session_user(request)
     if not session_user: return RedirectResponse("/login")
     form_data = await request.form()
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     safe_csrf = csrf_token or "invalid_token"
     if not hmac.compare_digest(form_data.get("csrf_token", ""), safe_csrf): raise HTTPException(status_code=403, detail="CSRF token mismatch")
     new_name = form_data.get("new_name")
@@ -919,20 +859,22 @@ async def rename_channel(request: Request, guild_id: str, channel_id: str):
 async def admin_panel(request: Request):
     admin_auth = request.cookies.get("admin_auth")
     from db import db, guild_premium, payments, license_keys, guild_cooldowns, gift_logs
-    session = None
-    if admin_auth: 
-        session = await db.admin_sessions.find_one({ "token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()} })
-        # [SECURITY FIX]: Validate User-Agent for stolen admin cookie
-        if session and session.get("ua") != request.headers.get("user-agent", ""):
-            await db.admin_sessions.delete_one({"token": admin_auth})
-            session = None
-            
+    session = await get_admin_session(request) if admin_auth else None
+
     if not session:
+        error_code = (request.query_params.get("error") or "").strip().lower()
+        error_html = ""
+        if error_code == "bad_password":
+            error_html = "<div style='margin-bottom:16px;padding:12px 14px;border:1px solid #ff5a5a;background:#1a0606;color:#ff8a8a;max-width:420px;text-align:center;'>Incorrect authorization key. Check your ADMIN_KEY and try again.</div>"
         response = HTMLResponse(
-            "<html><body style='background:#030305;color:#f00;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;'>"
+            "<html><body style='background:#030305;color:#f00;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;padding:20px;'>"
             "<h2 style='margin-bottom:20px;letter-spacing:0.2em;'>MASTER UPLINK</h2>"
-            "<form method='post' action='/admin/auth'><input type='password' name='key' placeholder='Enter Authorization Key' style='background:#111;border:1px solid #f00;color:#f00;padding:12px;font-size:16px;'><button style='background:#f00;color:#000;padding:12px 20px;border:none;cursor:pointer;font-weight:bold;margin-left:10px;'>Initialize</button></form>"
-            "</body></html>", status_code=401
+            f"{error_html}"
+            "<form method='post' action='/admin/auth' style='display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;'>"
+            "<input type='password' name='key' autocomplete='current-password' placeholder='Enter Authorization Key' style='background:#111;border:1px solid #f00;color:#f00;padding:12px;font-size:16px;'>"
+            "<button style='background:#f00;color:#000;padding:12px 20px;border:none;cursor:pointer;font-weight:bold;'>Initialize</button>"
+            "</form>"
+            "</body></html>", status_code=200
         )
         if admin_auth: response.delete_cookie("admin_auth", path="/")
         return response
@@ -994,48 +936,61 @@ async def admin_panel(request: Request):
         "request": request, "payloads": payloads, "bot_active": engine_state["active"], "app_state": app_state,
         "ai_status": "ONLINE", "db_structure": db_structure, "servers": servers, "license_keys": keys, 
         "active_keys_count": active_subs_count, "active_subs_count": active_subs_count,
-        "payments": all_payments, "total_revenue": total_revenue, "paid_payments_count": paid_payments_count, "gift_logs": all_gifts, "now": now
+        "payments": all_payments, "total_revenue": total_revenue, "paid_payments_count": paid_payments_count, "gift_logs": all_gifts, "now": now,
+        "admin_csrf_token": session.get("csrf_token") if session else ""
     })
+
+async def get_admin_session(request: Request):
+    admin_auth = request.cookies.get("admin_auth")
+    if not admin_auth:
+        return None
+    from db import db
+    session = await db.admin_sessions.find_one({"token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}})
+    if not session:
+        return None
+    if session.get("ua") != request.headers.get("user-agent", ""):
+        await db.admin_sessions.delete_one({"token": admin_auth})
+        return None
+    return session
+
+async def require_admin_post(request: Request):
+    session = await get_admin_session(request)
+    if not session:
+        return None
+    form = await request.form()
+    if not secure_csrf_check(form.get("csrf_token", ""), session.get("csrf_token", "")):
+        raise HTTPException(status_code=403, detail="CSRF token mismatch")
+    return session
 
 @app.post("/admin/auth")
 @limiter.limit("5/minute")
 async def admin_auth_post(request: Request):
-    if not is_same_origin_request(request):
-        raise HTTPException(status_code=403, detail="Cross-site request blocked")
     form = await request.form()
-    key = form.get("key", "")
-    if not key: return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
+    key = form.get("key", "").strip()
+    if not key:
+        return RedirectResponse("/admin?error=bad_password", status_code=303)
     from db import db
     if hmac.compare_digest(key, ADMIN_KEY):
         response = RedirectResponse("/admin?tab=control", status_code=303)
         token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(32)
         await db.admin_sessions.insert_one({ 
             "token": token, 
+            "csrf_token": csrf_token,
             "ua": request.headers.get("user-agent", ""),
             "created_at": datetime.datetime.utcnow(), 
             "expires_at": datetime.datetime.utcnow() + datetime.timedelta(days=1) 
         })
         response.set_cookie("admin_auth", token, httponly=True, secure=True, samesite="Strict", max_age=86400)
         return response
-    return HTMLResponse("Uplink Severed: Invalid Signature", status_code=403)
+    return RedirectResponse("/admin?error=bad_password", status_code=303)
 
 async def check_admin_auth(request: Request):
-    if request.method != "GET" and not is_same_origin_request(request):
-        return False
-    admin_auth = request.cookies.get("admin_auth")
-    if not admin_auth: return False
-    from db import db
-    session = await db.admin_sessions.find_one({"token": admin_auth, "expires_at": {"$gt": datetime.datetime.utcnow()}})
-    if not session: return False
-    # Validate User-Agent for zero-trust
-    if session.get("ua") != request.headers.get("user-agent", ""):
-        await db.admin_sessions.delete_one({"token": admin_auth})
-        return False
-    return True
+    return await get_admin_session(request) is not None
 
 @app.post("/admin/toggle_state/{feature}")
 async def toggle_state(request: Request, feature: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     if feature == "payments": app_state["payments_active"] = not app_state["payments_active"]
     elif feature == "redemption": app_state["redemption_active"] = not app_state["redemption_active"]
     elif feature == "bot": engine_state["active"] = not engine_state["active"]
@@ -1043,7 +998,7 @@ async def toggle_state(request: Request, feature: str):
 
 @app.post("/admin/set_maintenance")
 async def set_maintenance(request: Request):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     form = await request.form()
     mode = form.get("mode", "none")
     if mode in ["none", "bot", "web", "both"]:
@@ -1053,32 +1008,32 @@ async def set_maintenance(request: Request):
 
 @app.post("/admin/toggle_bot")
 async def toggle_bot(request: Request):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     engine_state["active"] = not engine_state["active"]
     return RedirectResponse("/admin?tab=control", status_code=303)
 
 @app.post("/admin/force_harvest")
 async def admin_force_harvest(request: Request, bg_tasks: BackgroundTasks):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     bg_tasks.add_task(parallel_harvest_sweep)
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/delete_payload/{payload_id}")
 async def admin_delete_payload(request: Request, payload_id: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     valid_id = validate_object_id(payload_id) 
     await payload_armory.delete_one({"_id": valid_id})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/purge_armory")
 async def admin_purge_armory(request: Request):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     await payload_armory.delete_many({})
     return RedirectResponse("/admin?tab=armory", status_code=303)
 
 @app.post("/admin/db/drop_collection/{coll_name}")
 async def admin_drop_collection(request: Request, coll_name: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     db_ref = payload_armory.database
     await db_ref.drop_collection(coll_name)
@@ -1086,7 +1041,7 @@ async def admin_drop_collection(request: Request, coll_name: str):
 
 @app.post("/admin/db/delete_doc/{coll_name}/{doc_id}")
 async def admin_delete_doc(request: Request, coll_name: str, doc_id: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     db_ref = payload_armory.database
     valid_id = validate_object_id(doc_id) 
@@ -1095,7 +1050,7 @@ async def admin_delete_doc(request: Request, coll_name: str, doc_id: str):
 
 @app.post("/admin/db/edit_doc/{coll_name}/{doc_id}")
 async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     if coll_name not in ALLOWED_COLLECTIONS: return HTMLResponse("Invalid collection", status_code=400)
     form = await request.form()
     raw_json = form.get("raw_json")
@@ -1120,7 +1075,7 @@ async def admin_edit_doc(request: Request, coll_name: str, doc_id: str):
 
 @app.post("/admin/generate_key")
 async def admin_generate_key(request: Request):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     form = await request.form()
     preset = form.get("duration_preset", "30")
     if preset == "custom":
@@ -1147,7 +1102,7 @@ async def admin_generate_key(request: Request):
 
 @app.post("/admin/server/{guild_id}/toggle_premium")
 async def admin_toggle_premium(request: Request, guild_id: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     from premium import is_guild_premium, grant_premium
     from db import guild_premium
     is_prem = await is_guild_premium(int(guild_id))
@@ -1157,21 +1112,21 @@ async def admin_toggle_premium(request: Request, guild_id: str):
 
 @app.post("/admin/server/{guild_id}/reset_cooldowns")
 async def admin_reset_cooldowns(request: Request, guild_id: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     from db import guild_cooldowns
     await guild_cooldowns.delete_many({"guild_id": guild_id})
     return RedirectResponse("/admin?tab=servers", status_code=303)
 
 @app.post("/admin/server/{guild_id}/reset_cooldown/{module}")
 async def admin_reset_cooldown(request: Request, guild_id: str, module: str):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     from db import guild_cooldowns
     await guild_cooldowns.delete_one({"guild_id": guild_id, "raid_type": module})
     return RedirectResponse("/admin?tab=servers", status_code=303)
 
 @app.post("/admin/gift_premium")
 async def admin_gift_premium(request: Request):
-    if not await check_admin_auth(request): return RedirectResponse("/")
+    if not await require_admin_post(request): return RedirectResponse("/")
     form = await request.form()
     guild_id = form.get("guild_id")
     days = int(form.get("days", "30")) if form.get("days", "30").isdigit() else 30
